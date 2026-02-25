@@ -14,7 +14,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 import tldextract
 
-##
+#
 WORD_RE = re.compile(r"[a-zA-Z0-9]{3,}")
 WS_RE = re.compile(r"\s+")
 SCRIPT_SRC_RE = re.compile(r"<script[^>]+src=['\"]([^'\"]+)['\"]", re.IGNORECASE)

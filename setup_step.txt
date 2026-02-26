@@ -1,0 +1,13 @@
+Step 1: Create and activate venv
+py -3.12 -m venv .venv
+.\.venv\Scripts\activate
+
+Step 2: install reuquired packages
+pip install -r requirements.txt
+
+
+Step 3: run the extract_features.py: this is the main step to crawl the website list
+python extract_features.py --input domains.txt --out-jsonl features.jsonl --concurrency 60 --pages 6 --timeout 10 --resume
+
+Step 4: run the finalize_scores.py: this step convert the crawled JSONL into CSV
+python finalize_scores.py --features-jsonl features.jsonl --out-csv scored.csv --out-jsonl scored.jsonl

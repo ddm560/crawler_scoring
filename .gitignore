@@ -41,11 +41,10 @@ Thumbs.db
 .ipynb_checkpoints/
 
 # Local outputs / generated data
+output/
 features.jsonl
-scored.jsonl
-scored.csv
+*.jsonl
+*.csv
 
-#Domains list
+# Domains list
 domains.txt
-
-

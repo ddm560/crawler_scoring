@@ -197,6 +197,11 @@ def main():
     ap.add_argument("--out-jsonl", default="scored.jsonl")
     args = ap.parse_args()
 
+    output_dir = Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_csv_path = output_dir / Path(args.out_csv).name
+    out_jsonl_path = output_dir / Path(args.out_jsonl).name
+
     rows: List[dict] = []
     counts_adsense: Dict[str, int] = {}
     counts_gtm: Dict[str, int] = {}
@@ -299,12 +304,12 @@ def main():
         ))
 
     # Write JSONL
-    with open(args.out_jsonl, "w", encoding="utf-8") as f:
+    with open(out_jsonl_path, "w", encoding="utf-8") as f:
         for s in scored:
             f.write(json.dumps(asdict(s), ensure_ascii=False) + "\n")
 
     # Write CSV
-    with open(args.out_csv, "w", newline="", encoding="utf-8") as f:
+    with open(out_csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow([
             "input_domain", "final_url", "reg_domain",
@@ -324,7 +329,7 @@ def main():
                 " ; ".join(s.reasons),
             ])
 
-    print(f"Done. Wrote {args.out_csv} and {args.out_jsonl}.")
+    print(f"Done. Wrote {out_csv_path} and {out_jsonl_path}.")
 
     # Optional interactive rename step for local/manual runs.
     if sys.stdin.isatty():
@@ -336,8 +341,8 @@ def main():
             base_name = ""
 
         if base_name:
-            csv_path = Path(args.out_csv)
-            jsonl_path = Path(args.out_jsonl)
+            csv_path = out_csv_path
+            jsonl_path = out_jsonl_path
             new_csv = csv_path.with_name(f"{base_name}.csv")
             new_jsonl = jsonl_path.with_name(f"{base_name}.jsonl")
 

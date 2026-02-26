@@ -2,7 +2,9 @@
 import argparse
 import csv
 import json
+import sys
 from dataclasses import dataclass, asdict
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 ##
@@ -323,6 +325,28 @@ def main():
             ])
 
     print(f"Done. Wrote {args.out_csv} and {args.out_jsonl}.")
+
+    # Optional interactive rename step for local/manual runs.
+    if sys.stdin.isatty():
+        try:
+            base_name = input(
+                "Enter output base name (without extension) to rename files, or press Enter to keep current names: "
+            ).strip()
+        except EOFError:
+            base_name = ""
+
+        if base_name:
+            csv_path = Path(args.out_csv)
+            jsonl_path = Path(args.out_jsonl)
+            new_csv = csv_path.with_name(f"{base_name}.csv")
+            new_jsonl = jsonl_path.with_name(f"{base_name}.jsonl")
+
+            if new_csv.exists() or new_jsonl.exists():
+                print("Rename skipped: target file already exists.")
+            else:
+                csv_path.rename(new_csv)
+                jsonl_path.rename(new_jsonl)
+                print(f"Renamed outputs to {new_csv} and {new_jsonl}.")
 
 
 if __name__ == "__main__":

@@ -262,6 +262,8 @@ def main() -> int:
 
 if __name__ == "__main__":
     rc = main()
-    if rc != 0:
+    if rc == 0:
+        pause_if_interactive("Run complete. Press Enter to exit.")
+    else:
         pause_if_interactive("Application failed. Press Enter to exit.")
     raise SystemExit(rc)

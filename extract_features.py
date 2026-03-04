@@ -8,17 +8,20 @@ import random
 import re
 import sys
 import time
+import warnings
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import tldextract
 try:
     import whois
 except Exception:
     whois = None
+
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 #
 WORD_RE = re.compile(r"[a-zA-Z0-9]{3,}")
@@ -902,15 +905,48 @@ def print_usage_summary(stats: NetworkStats, started: float, out_jsonl: str) -> 
     print(flush=True)
 
 
+def render_progress_bar(completed: int, total: int, started: float, width: int = 28) -> None:
+    total = max(1, total)
+    ratio = clamp(completed / total, 0.0, 1.0)
+    filled = int(round(ratio * width))
+    bar = "#" * filled + "-" * (width - filled)
+    elapsed = max(0.001, time.time() - started)
+    rate = completed / elapsed
+    eta_s = (total - completed) / rate if rate > 0 else 0.0
+    print(
+        f"\r[{bar}] {completed}/{total} ({ratio * 100:5.1f}%) | {rate:.2f} domains/s | ETA {eta_s/60:.1f} min",
+        end="",
+        flush=True,
+    )
+
+
+def render_setup_progress(step: int, total_steps: int, label: str, width: int = 28) -> None:
+    total_steps = max(1, total_steps)
+    ratio = clamp(step / total_steps, 0.0, 1.0)
+    filled = int(round(ratio * width))
+    bar = "#" * filled + "-" * (width - filled)
+    print(
+        f"\r[{bar}] Setup {step}/{total_steps} ({ratio * 100:5.1f}%) | {label}",
+        end="",
+        flush=True,
+    )
+
+
 async def main_async(args) -> int:
+    setup_steps = 4
+    render_setup_progress(0, setup_steps, "Initializing")
+
     with open(args.input, "r", encoding="utf-8") as f:
         domains = [normalize_domain(line) for line in f if line.strip()]
     domains = [d for d in domains if d]
+    render_setup_progress(1, setup_steps, "Loaded input domains")
 
     done = load_done_domains(args.out_jsonl) if args.resume else set()
     todo = [d for d in domains if d not in done]
+    render_setup_progress(2, setup_steps, "Prepared resume state")
 
     if not todo:
+        print()
         print("Nothing to do (all domains already present in output JSONL).")
         return 0
 
@@ -920,15 +956,19 @@ async def main_async(args) -> int:
         todo_domains=len(todo),
         skipped_domains=max(0, len(domains) - len(todo)),
     )
+    render_setup_progress(3, setup_steps, "Computed run plan")
 
     connector = aiohttp.TCPConnector(ssl=False, limit=args.concurrency)
     headers = {"User-Agent": args.user_agent}
     sem = asyncio.Semaphore(args.concurrency)
     stats = NetworkStats()
+    render_setup_progress(4, setup_steps, "Starting crawl workers")
 
     started = time.time()
     completed = 0
     total = len(todo)
+
+    render_progress_bar(completed, total, started)
 
     async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
         with open(args.out_jsonl, "a", encoding="utf-8") as out:
@@ -945,11 +985,10 @@ async def main_async(args) -> int:
 
                 completed += 1
                 if completed % args.log_every == 0 or completed == total:
-                    elapsed = max(0.001, time.time() - started)
-                    rate = completed / elapsed
-                    eta_s = (total - completed) / rate if rate > 0 else 0
-                    print(f"[{completed}/{total}] {rate:.2f} domains/s | ETA ~ {eta_s/60:.1f} min", flush=True)
+                    render_progress_bar(completed, total, started)
 
+    if total > 0:
+        print(flush=True)
     print_usage_summary(stats, started, args.out_jsonl)
     print("Feature extraction complete.")
     print(f"Wrote: {args.out_jsonl}")

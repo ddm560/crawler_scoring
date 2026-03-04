@@ -5,6 +5,14 @@ import os
 import sys
 import traceback
 from pathlib import Path
+from typing import Optional
+
+try:
+    import tkinter as tk
+    from tkinter import filedialog
+except Exception:
+    tk = None
+    filedialog = None
 
 import extract_features
 import finalize_scores
@@ -29,9 +37,33 @@ def pause_if_interactive(message: str = "Press Enter to exit.") -> None:
             pass
 
 
-def prompt_for_existing_file(prompt: str, default: str) -> str:
+def browse_for_file(initial_dir: Path) -> Optional[str]:
+    if tk is None or filedialog is None:
+        return None
+
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        selected = filedialog.askopenfilename(
+            title="Select domains file",
+            initialdir=str(initial_dir),
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*"),
+            ],
+        )
+        root.destroy()
+        return selected or None
+    except Exception:
+        return None
+
+
+def prompt_for_existing_file(prompt: str, default: str, initial_dir: Optional[Path] = None) -> str:
     while True:
-        value = read_with_default(prompt, default)
+        selected = browse_for_file(initial_dir or Path(default).parent)
+        value = selected or read_with_default(prompt, default)
         path = Path(value)
         if not path.exists():
             print(f"Error: file not found: {path}", file=sys.stderr)
@@ -94,7 +126,14 @@ def main() -> int:
         base_dir = get_base_dir()
         os.chdir(base_dir)
 
-        input_file = prompt_for_existing_file("Input domains file", str(base_dir / "input" / "domains.txt"))
+        print("Welcome to the domains scorer.")
+        print("Please wait while the file picker opens, then choose your domains list.")
+
+        input_file = prompt_for_existing_file(
+            "Input domains file",
+            str(base_dir / "input" / "domains.txt"),
+            initial_dir=base_dir / "input",
+        )
         features_file = prompt_for_output_file("Features output JSONL", str(base_dir / "features.jsonl"))
         concurrency = prompt_for_positive_int("Concurrency", "60")
         pages = prompt_for_positive_int("Pages per domain", "6")

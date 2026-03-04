@@ -334,6 +334,20 @@ What `run.ps1` does:
 - runs extraction first
 - runs scoring only if extraction succeeds
 
+One-command macOS runner:
+
+```bash
+chmod +x run.command
+./run.command
+```
+
+What `run.command` does:
+
+- uses `.venv/bin/python3`
+- runs the same interactive launcher as the Windows exe
+- opens a file picker for the domains file when available
+- runs extraction first, then scoring
+
 ## Windows `.exe` Build and Distribution
 
 Build dependency:
@@ -374,6 +388,44 @@ For best troubleshooting, run the exe from PowerShell:
 ```powershell
 .\crawler_scoring.exe
 ```
+
+## macOS Build and Distribution
+
+Set up a virtual environment:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install pyinstaller
+```
+
+Build the macOS binary:
+
+```bash
+chmod +x build_macos.sh
+./build_macos.sh
+```
+
+The build output is:
+
+- `dist/domains_scorer`
+
+To run on another Mac, ship this layout:
+
+```txt
+dist/
+  domains_scorer
+  input/
+    domains.txt
+```
+
+Notes:
+
+- macOS builds must be created on macOS. You cannot reliably build a native macOS binary from Windows.
+- The first run may trigger Gatekeeper warnings on another Mac if the binary is unsigned.
+- If you do not need a packaged binary, `run.command` is the simpler path.
 
 ## Notes and Limitations
 

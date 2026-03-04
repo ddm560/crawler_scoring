@@ -44,7 +44,10 @@ def browse_for_file(initial_dir: Path) -> Optional[str]:
     try:
         root = tk.Tk()
         root.withdraw()
-        root.attributes("-topmost", True)
+        try:
+            root.attributes("-topmost", True)
+        except Exception:
+            pass
         selected = filedialog.askopenfilename(
             title="Select domains file",
             initialdir=str(initial_dir),
@@ -61,9 +64,19 @@ def browse_for_file(initial_dir: Path) -> Optional[str]:
 
 
 def prompt_for_existing_file(prompt: str, default: str, initial_dir: Optional[Path] = None) -> str:
+    file_picker_failed = False
     while True:
         selected = browse_for_file(initial_dir or Path(default).parent)
-        value = selected or read_with_default(prompt, default)
+        if selected:
+            value = selected
+        else:
+            if not file_picker_failed:
+                if tk is None or filedialog is None:
+                    print("File picker unavailable. Falling back to typed path input.")
+                else:
+                    print("File picker not used. Falling back to typed path input.")
+                file_picker_failed = True
+            value = read_with_default(prompt, default)
         path = Path(value)
         if not path.exists():
             print(f"Error: file not found: {path}", file=sys.stderr)

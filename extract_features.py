@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import random
 import re
 import sys
@@ -168,7 +170,9 @@ async def fetch_html(
     url: str,
     timeout_s: float,
     max_bytes: int,
+    stats: NetworkStats,
 ) -> Tuple[int, str, str]:
+    stats.requests_attempted += 1
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout_s), allow_redirects=True) as resp:
             status = resp.status
@@ -176,12 +180,19 @@ async def fetch_html(
             data = await resp.content.read(max_bytes + 1)
             if len(data) > max_bytes:
                 data = data[:max_bytes]
+            stats.requests_succeeded += 1
+            stats.bytes_downloaded += len(data)
             try:
                 html = data.decode(resp.charset or "utf-8", errors="replace")
             except Exception:
                 html = data.decode("utf-8", errors="replace")
             return status, final_url, html
+    except asyncio.TimeoutError:
+        stats.requests_failed += 1
+        stats.timeouts += 1
+        return 0, url, ""
     except Exception:
+        stats.requests_failed += 1
         return 0, url, ""
 
 
@@ -190,9 +201,10 @@ async def try_sitemap(
     base: str,
     timeout_s: float,
     max_bytes: int,
+    stats: NetworkStats,
 ) -> Optional[List[str]]:
     for path in ["/sitemap.xml", "/sitemap_index.xml"]:
-        status, _, html = await fetch_html(session, urljoin(base, path), timeout_s, max_bytes)
+        status, _, html = await fetch_html(session, urljoin(base, path), timeout_s, max_bytes, stats)
         if status and status < 400 and html and ("<urlset" in html or "<sitemapindex" in html):
             locs = re.findall(r"<loc>\s*(.*?)\s*</loc>", html, flags=re.IGNORECASE)
             urls = [loc.strip() for loc in locs if loc.strip().startswith("http")]
@@ -266,6 +278,15 @@ class DomainFeatures:
     boilerplate_ratio: float  # rough within-domain similarity proxy (v1)
 
 
+@dataclass
+class NetworkStats:
+    requests_attempted: int = 0
+    requests_succeeded: int = 0
+    requests_failed: int = 0
+    timeouts: int = 0
+    bytes_downloaded: int = 0
+
+
 def median_int(vals: List[int]) -> int:
     if not vals:
         return 0
@@ -306,6 +327,7 @@ async def process_domain(
     pages: int,
     timeout_s: float,
     max_bytes: int,
+    stats: NetworkStats,
 ) -> DomainFeatures:
     d0 = normalize_domain(domain)
     candidates = [f"https://{d0}/", f"http://{d0}/"]
@@ -315,7 +337,7 @@ async def process_domain(
     home_html = ""
 
     for u in candidates:
-        status, final_url, home_html = await fetch_html(session, u, timeout_s, max_bytes)
+        status, final_url, home_html = await fetch_html(session, u, timeout_s, max_bytes, stats)
         if status and status < 500 and home_html:
             break
 
@@ -338,7 +360,7 @@ async def process_domain(
         random.shuffle(internal)
         pages_to_fetch.extend(internal[: max(0, pages - 1)])
 
-        sitemap_urls = await try_sitemap(session, base, timeout_s, max_bytes)
+        sitemap_urls = await try_sitemap(session, base, timeout_s, max_bytes, stats)
         sitemap_found = sitemap_urls is not None
         if sitemap_urls:
             sample = []
@@ -373,7 +395,7 @@ async def process_domain(
     boiler_texts: List[str] = []
 
     for idx, u in enumerate(pages_to_fetch):
-        st, fu, html = await fetch_html(session, u, timeout_s, max_bytes)
+        st, fu, html = await fetch_html(session, u, timeout_s, max_bytes, stats)
         if st and st < 500 and html:
             pages_fetched += 1
         if not html:
@@ -472,6 +494,47 @@ def load_done_domains(jsonl_path: str) -> Set[str]:
     return done
 
 
+def print_resource_summary(args, total_domains: int, todo_domains: int, skipped_domains: int) -> None:
+    max_inflight_bytes = args.concurrency * args.max_bytes
+    cpu_count = os.cpu_count() or 0
+
+    print("Run resource summary:")
+    print(f"- Input domains: {total_domains}")
+    print(f"- Domains to process this run: {todo_domains}")
+    print(f"- Domains skipped by resume: {skipped_domains}")
+    print(f"- Worker concurrency: {args.concurrency} async requests")
+    print(f"- Pages per domain target: {args.pages}")
+    print(f"- Request timeout: {args.timeout:.1f} seconds")
+    print(f"- Max HTML bytes per response: {args.max_bytes:,}")
+    print(f"- Estimated max in-flight HTML buffer: {max_inflight_bytes:,} bytes")
+    print(f"- Detected CPU cores: {cpu_count}")
+    print(f"- Output JSONL: {args.out_jsonl}")
+    print(flush=True)
+
+
+def print_usage_summary(stats: NetworkStats, started: float, out_jsonl: str) -> None:
+    elapsed = max(0.001, time.time() - started)
+    avg_bytes = (stats.bytes_downloaded / stats.requests_succeeded) if stats.requests_succeeded else 0.0
+    req_rate = stats.requests_attempted / elapsed
+
+    try:
+        output_size = os.path.getsize(out_jsonl)
+    except OSError:
+        output_size = 0
+
+    print("Run usage summary:")
+    print(f"- Total runtime: {elapsed:.1f} seconds")
+    print(f"- Requests attempted: {stats.requests_attempted}")
+    print(f"- Successful responses: {stats.requests_succeeded}")
+    print(f"- Failed responses: {stats.requests_failed}")
+    print(f"- Timeouts: {stats.timeouts}")
+    print(f"- Total bytes downloaded: {stats.bytes_downloaded:,}")
+    print(f"- Average bytes per successful response: {avg_bytes:,.0f}")
+    print(f"- Effective request rate: {req_rate:.2f} req/s")
+    print(f"- Current output JSONL size: {output_size:,} bytes")
+    print(flush=True)
+
+
 async def main_async(args) -> int:
     with open(args.input, "r", encoding="utf-8") as f:
         domains = [normalize_domain(line) for line in f if line.strip()]
@@ -484,9 +547,17 @@ async def main_async(args) -> int:
         print("Nothing to do (all domains already present in output JSONL).")
         return 0
 
+    print_resource_summary(
+        args,
+        total_domains=len(domains),
+        todo_domains=len(todo),
+        skipped_domains=len(done),
+    )
+
     connector = aiohttp.TCPConnector(ssl=False, limit=args.concurrency)
     headers = {"User-Agent": args.user_agent}
     sem = asyncio.Semaphore(args.concurrency)
+    stats = NetworkStats()
 
     started = time.time()
     completed = 0
@@ -496,7 +567,7 @@ async def main_async(args) -> int:
         with open(args.out_jsonl, "a", encoding="utf-8") as out:
             async def bound(d: str) -> DomainFeatures:
                 async with sem:
-                    return await process_domain(d, session, args.pages, args.timeout, args.max_bytes)
+                    return await process_domain(d, session, args.pages, args.timeout, args.max_bytes, stats)
 
             tasks = [asyncio.create_task(bound(d)) for d in todo]
 
@@ -512,6 +583,7 @@ async def main_async(args) -> int:
                     eta_s = (total - completed) / rate if rate > 0 else 0
                     print(f"[{completed}/{total}] {rate:.2f} domains/s | ETA ~ {eta_s/60:.1f} min", flush=True)
 
+    print_usage_summary(stats, started, args.out_jsonl)
     print("Feature extraction complete.")
     print(f"Wrote: {args.out_jsonl}")
     return 0

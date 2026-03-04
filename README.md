@@ -391,6 +391,80 @@ For best troubleshooting, run the exe from PowerShell:
 
 ## macOS Build and Distribution
 
+If the Mac is a fresh machine with nothing installed, use this full setup flow.
+
+### Build on macOS From Scratch
+
+1. Install Python 3.12
+
+- Download and install Python 3.12 from `python.org`, or install it with Homebrew:
+
+```bash
+brew install python@3.12
+```
+
+2. Open Terminal and go to the project folder
+
+```bash
+cd /path/to/crawler_scoring
+```
+
+3. Create a virtual environment
+
+```bash
+python3.12 -m venv .venv
+```
+
+4. Activate the virtual environment
+
+```bash
+source .venv/bin/activate
+```
+
+5. Upgrade pip
+
+```bash
+python -m pip install --upgrade pip
+```
+
+6. Install project dependencies
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+7. Install PyInstaller
+
+```bash
+python -m pip install pyinstaller
+```
+
+8. Make the build script executable
+
+```bash
+chmod +x build_macos.sh
+```
+
+9. Build the macOS binary
+
+```bash
+./build_macos.sh
+```
+
+10. Run the built binary
+
+```bash
+./dist/domains_scorer
+```
+
+Expected output:
+
+- built binary: `dist/domains_scorer`
+- runtime outputs:
+  - `features.jsonl`
+  - `output/*.csv`
+  - `output/*.jsonl`
+
 Set up a virtual environment:
 
 ```bash

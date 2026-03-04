@@ -9,7 +9,8 @@ It runs in 2 steps:
 
 ## What You Put In
 
-- A text file with one domain per line (example: `domains.txt`)
+- A text file with one domain per line
+- Default location: `input/domains.txt`
 
 Example:
 
@@ -24,8 +25,8 @@ mydomain.org
 After both steps run, you get:
 
 - `features.jsonl`: raw extracted features for each domain (technical signals)
-- `scored.jsonl`: scored results in JSONL format
-- `scored.csv`: scored results in spreadsheet-friendly format
+- `output/scored.jsonl`: scored results in JSONL format
+- `output/scored.csv`: scored results in spreadsheet-friendly format
 
 ## Step-by-Step: How It Works
 
@@ -60,8 +61,15 @@ This script reads `features.jsonl` and computes:
 
 It also writes:
 
-- `scored.jsonl`
-- `scored.csv`
+- `output/scored.jsonl`
+- `output/scored.csv`
+
+At the end of the scoring step, the script prompts for an optional output base name.
+
+Example:
+
+- press Enter: keep `output/scored.csv` and `output/scored.jsonl`
+- enter `batch_1`: rename to `output/batch_1.csv` and `output/batch_1.jsonl`
 
 ## The Scoring Logic (Plain English)
 
@@ -158,7 +166,7 @@ So a site with decent raw signals but weak crawl coverage may end up with a lowe
 
 ## What the Output Fields Mean (High-Level)
 
-In `scored.csv` / `scored.jsonl`, key fields are:
+In `output/scored.csv` / `output/scored.jsonl`, key fields are:
 
 - `score`: final quality score (0-100)
 - `bucket`: easy label for triage
@@ -171,7 +179,7 @@ In `scored.csv` / `scored.jsonl`, key fields are:
 
 Recommended workflow:
 
-1. Sort `scored.csv` by `score` (highest to lowest)
+1. Sort `output/scored.csv` by `score` (highest to lowest)
 2. Review `bucket` and `confidence`
 3. Read `reasons` for domains with very low or very high scores
 4. Manually review a sample of domains before making business decisions
@@ -285,7 +293,7 @@ Best practice:
 
 - Review actual performance outcomes (RPM, viewability, policy issues, fraud flags) and tune thresholds based on your own results.
 
-## Example Run Commands
+## Run Options
 
 Create and activate a virtual environment:
 
@@ -304,13 +312,67 @@ python -m pip install -r requirements.txt
 Run feature extraction:
 
 ```powershell
-python extract_features.py --input domains.txt --out-jsonl features.jsonl --concurrency 60 --pages 6 --timeout 10 --resume
+python extract_features.py --input input/domains.txt --out-jsonl features.jsonl --concurrency 60 --pages 6 --timeout 10 --resume
 ```
 
 Run scoring/export:
 
 ```powershell
 python finalize_scores.py --features-jsonl features.jsonl --out-csv scored.csv --out-jsonl scored.jsonl
+```
+
+One-command PowerShell runner:
+
+```powershell
+.\run.ps1
+```
+
+What `run.ps1` does:
+
+- prompts for input values
+- validates each value immediately
+- runs extraction first
+- runs scoring only if extraction succeeds
+
+## Windows `.exe` Build and Distribution
+
+Build dependency:
+
+```powershell
+python -m pip install pyinstaller
+```
+
+Build the executable:
+
+```powershell
+.\build_exe.ps1
+```
+
+The build output is:
+
+- `dist/crawler_scoring.exe`
+
+To run on another Windows machine, ship this layout:
+
+```txt
+dist/
+  crawler_scoring.exe
+  input/
+    domains.txt
+```
+
+When the exe runs, it:
+
+- defaults to `input/domains.txt` next to the exe
+- validates each prompt as it is entered
+- writes `features.jsonl` next to the exe
+- writes scored files into `output/`
+- prints the real error instead of silently closing if something fails
+
+For best troubleshooting, run the exe from PowerShell:
+
+```powershell
+.\crawler_scoring.exe
 ```
 
 ## Notes and Limitations
@@ -325,6 +387,9 @@ python finalize_scores.py --features-jsonl features.jsonl --out-csv scored.csv -
 - `features.jsonl` is empty:
   - Check network access and domain list
   - Confirm `extract_features.py` ran successfully
+- The exe closes too quickly:
+  - Rebuild it after code changes using `.\build_exe.ps1`
+  - Run it from PowerShell to see the printed error
 - `KeyError: ['score', 'bucket', 'confidence'] not in index`:
   - You loaded `features.jsonl` instead of `scored.jsonl`
 - `.gitignore` not working for outputs:

@@ -13,7 +13,7 @@ function Read-WithDefault {
     return $value.Trim()
 }
 
-$inputFile = Read-WithDefault -Prompt "Input domains file" -DefaultValue "input/domains.txt"
+$inputFile = Read-WithDefault -Prompt "Input domains file" -DefaultValue ".\input\domains.txt"
 $featuresFile = Read-WithDefault -Prompt "Features output JSONL" -DefaultValue "features.jsonl"
 $concurrency = Read-WithDefault -Prompt "Concurrency" -DefaultValue "60"
 $pages = Read-WithDefault -Prompt "Pages per domain" -DefaultValue "6"

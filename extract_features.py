@@ -517,7 +517,7 @@ async def main_async(args) -> int:
     return 0
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser("extract_features.py — crawl + feature extraction (streaming JSONL + resume)")
     p.add_argument("--input", required=True, help="Text file with one root domain per line")
     p.add_argument("--out-jsonl", required=True, help="Output JSONL path (append)")
@@ -528,12 +528,16 @@ def parse_args():
     p.add_argument("--resume", action="store_true", help="Skip domains already in out-jsonl")
     p.add_argument("--log-every", type=int, default=100, help="Progress log interval (domains)")
     p.add_argument("--user-agent", default="InventoryVettingBot/1.0 (+contact: ops@example.com)", help="User-Agent string")
-    return p.parse_args()
+    return p.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    try:
+        return int(asyncio.run(main_async(args)))
+    except KeyboardInterrupt:
+        return 130
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    try:
-        raise SystemExit(asyncio.run(main_async(args)))
-    except KeyboardInterrupt:
-        raise SystemExit(130)
+    raise SystemExit(main())

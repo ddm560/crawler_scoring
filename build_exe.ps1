@@ -2,7 +2,7 @@ $python = ".\.venv\Scripts\python.exe"
 
 & $python -m PyInstaller `
     --onefile `
-    --name crawler_scoring `
+    --name domains_scorer `
     app_cli.py
 
 if ($LASTEXITCODE -ne 0) {
@@ -10,4 +10,4 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-Write-Host "Build complete: dist\crawler_scoring.exe"
+Write-Host "Build complete: dist\domains_scorer.exe"

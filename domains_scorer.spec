@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='crawler_scoring',
+    name='domains_scorer',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

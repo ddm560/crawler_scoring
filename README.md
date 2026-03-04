@@ -2,6 +2,8 @@
 
 This tool takes a list of domains, crawls each site, extracts signals related to content quality and monetization patterns, and then assigns a score for how strong the domain looks for programmatic advertising use.
 
+It is designed as a heuristic screening tool for open exchange whitelist / blacklist candidate generation. It is not a performance predictor.
+
 It runs in 2 steps:
 
 1. `extract_features.py` (crawl + feature extraction)
@@ -41,14 +43,19 @@ For each domain, it:
 3. Detects the final URL after redirects
 4. Collects internal links from the homepage
 5. Optionally looks for a sitemap (`/sitemap.xml`, `/sitemap_index.xml`)
-6. Fetches a small sample of pages from the site
-7. Extracts signals (features) from the HTML and visible text
-8. Writes one JSON record (one line) to `features.jsonl`
+6. Checks whether `robots.txt` is accessible
+7. Fetches a small sample of pages from the site
+8. Fetches and analyzes `ads.txt` (if available)
+9. Validates `sellers.json` against known major SSPs (if applicable)
+10. Attempts a domain age lookup
+11. Extracts signals (features) from the HTML and visible text
+12. Writes one JSON record (one line) to `features.jsonl`
 
 Important:
 
 - This step does not assign a `score`.
 - It only creates the raw signals used by the scoring step.
+- After schema changes, old `features.jsonl` files will not contain the new fields. Regenerate features to fully use the upgraded model.
 
 ### Step 2: Score each domain (`finalize_scores.py`)
 
@@ -56,7 +63,7 @@ This script reads `features.jsonl` and computes:
 
 - `score` (0-100)
 - `confidence` (0.0-1.0)
-- `bucket` (`Good domain`, `Suspicious`, or `Need more evidence`)
+- `bucket` (`Pass (Fast Track)`, `Manual Review`, `High-Risk Review`, `Reject / Deprioritize`, or `Needs Manual Review`)
 - human-readable reasons explaining what influenced the score
 
 It also writes:
@@ -82,7 +89,10 @@ The tool looks for signs that pages contain real content vs. thin or templated c
 Examples:
 
 - median text length across sampled pages
-- boilerplate similarity across pages
+- content uniqueness across sampled pages
+- AI-like templated phrasing
+- keyword repetition patterns
+- thin pagination-style pages
 - article/news schema hints in HTML
 
 This helps detect:
@@ -101,6 +111,9 @@ Examples:
 - number of third-party scripts
 - external link ratio
 - affiliate markers in HTML
+- `ads.txt` structural quality
+- direct vs reseller relationships
+- `sellers.json` mismatches
 
 This helps detect:
 
@@ -118,6 +131,7 @@ Examples:
 - Contact page links
 - Privacy + Terms links
 - parked / domain-for-sale indicators
+- domain age
 
 This helps separate normal publishers from placeholder or low-trust sites.
 
@@ -145,24 +159,29 @@ Examples:
 
 This helps identify domain networks that may not be independently strong publishers.
 
+The scorer converts these patterns into a `network_risk_score`, which is a major negative driver when strong network signals are present.
+
 ## How the Final Score Is Built
 
 `finalize_scores.py` computes sub-scores (0-100) and combines them using weights:
 
-- 30% Content
-- 30% Ads/Monetization
-- 25% Cluster similarity / shared IDs
+- 35% Ads/Monetization
+- 30% Cluster similarity / shared IDs
+- 20% Content
 - 10% Legitimacy
 - 5% UX
 
 Then it applies a confidence adjustment based on crawl quality:
 
-- how many pages were fetched
+- pages fetched vs requested
 - success rate of requests
 - whether a sitemap was found
+- whether `robots.txt` was accessible
 - whether the site looked blocked/captcha-protected
 
 So a site with decent raw signals but weak crawl coverage may end up with a lower final score.
+
+Hard-fail rules can override the normal score when confidence is high and severe risk signals are present.
 
 ## What the Output Fields Mean (High-Level)
 
@@ -174,6 +193,13 @@ In `output/scored.csv` / `output/scored.jsonl`, key fields are:
 - `reasons`: short explanations for the score
 - `pages_fetched`, `success_rate`: crawl quality diagnostics
 - `adsense_pub_ids`, `gtm_ids`, `ga_ids`: IDs found during crawling
+- `ads_txt_quality_score`: structural quality score for `ads.txt`
+- `network_risk_score`: strength of batch-level network / clustering risk
+- `domain_age_years`: best-effort domain age
+- `reseller_ratio`: reseller share inside `ads.txt`
+- `direct_relationship_count`: number of DIRECT `ads.txt` relationships
+- `cluster_size`: largest detected infrastructure/template cluster size
+- `hard_fail_triggered`: whether hard-fail override forced rejection
 
 ## How to Use the Results
 
@@ -195,14 +221,19 @@ Use the score as an operational triage signal, not a standalone approval decisio
 
 Suggested thresholds (starting point):
 
-- `80-100` -> `Pass (Fast Track)`
-- `60-79` -> `Manual Review`
-- `40-59` -> `High-Risk Review`
+- `85-100` -> `Pass (Fast Track)`
+- `70-84` -> `Manual Review`
+- `40-69` -> `High-Risk Review`
 - `0-39` -> `Reject / Deprioritize`
+
+Important:
+
+- If `confidence < 0.6`, bucket is always `Needs Manual Review`
+- If a hard-fail rule triggers at high confidence, bucket is forced to `Reject / Deprioritize` and score is capped at `35`
 
 How to apply these in practice:
 
-### `80-100` (Pass / Fast Track)
+### `85-100` (Pass / Fast Track)
 
 Typical meaning:
 
@@ -215,7 +246,7 @@ Recommended action:
 - Move to business/commercial checks (pricing, geography, inventory type, policy fit)
 - Do a light manual QA sample before activation
 
-### `60-79` (Manual Review)
+### `70-84` (Manual Review)
 
 Typical meaning:
 
@@ -228,7 +259,7 @@ Recommended action:
 - Manually inspect homepage + 2-3 article/content pages
 - Verify ad density and user experience
 
-### `40-59` (High-Risk Review)
+### `40-69` (High-Risk Review)
 
 Typical meaning:
 
@@ -267,13 +298,13 @@ Examples:
 
 Practical rule:
 
-- If `confidence < 0.6`, treat the result as `Needs manual review` regardless of score
+- If `confidence < 0.6`, treat the result as `Needs Manual Review` regardless of score
 
 ## Suggested Ops Workflow
 
 1. Filter out domains with `confidence < 0.6` into a review queue
-2. Auto-prioritize domains with `score >= 80`
-3. Manually review domains in the `60-79` range
+2. Auto-prioritize domains with `score >= 85`
+3. Manually review domains in the `70-84` range
 4. Reject or deprioritize domains `< 40` unless there is a business exception
 5. Spot-check a sample from every bucket to validate the model over time
 
@@ -287,7 +318,7 @@ The thresholds above are a starting point. Adjust based on your goals:
 - Scale / growth focus:
   - Lower pass threshold (for example, `>= 70`) but require sampling QA
 - Arbitrage / monetization risk sensitivity:
-  - Pay closer attention to ad-density, affiliate, and cluster reasons
+  - Pay closer attention to ad-density, `ads.txt`, reseller ratio, and cluster reasons
 
 Best practice:
 
@@ -308,6 +339,8 @@ Install dependencies:
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
+
+After upgrading from an older version of the tool, regenerate `features.jsonl` to populate new fields such as `ads_txt_quality_score`, `domain_age_years`, and stronger content / cluster signals.
 
 Run feature extraction:
 
@@ -364,13 +397,13 @@ Build the executable:
 
 The build output is:
 
-- `dist/crawler_scoring.exe`
+- `dist/domains_scorer.exe`
 
 To run on another Windows machine, ship this layout:
 
 ```txt
 dist/
-  crawler_scoring.exe
+  domains_scorer.exe
   input/
     domains.txt
 ```
@@ -386,7 +419,7 @@ When the exe runs, it:
 For best troubleshooting, run the exe from PowerShell:
 
 ```powershell
-.\crawler_scoring.exe
+.\domains_scorer.exe
 ```
 
 ## macOS Build and Distribution
@@ -506,6 +539,7 @@ Notes:
 - Scores depend on what pages were reachable during crawling.
 - Some sites block crawlers, which can lower confidence.
 - JavaScript-heavy sites may hide content/signals from a simple HTML fetch.
+- `ads.txt`, `sellers.json`, and WHOIS checks are best-effort and may fail or be unavailable for some domains.
 - This tool is a heuristic system, not a definitive fraud/quality detector.
 
 ## Quick Troubleshooting
@@ -516,7 +550,8 @@ Notes:
 - The exe closes too quickly:
   - Rebuild it after code changes using `.\build_exe.ps1`
   - Run it from PowerShell to see the printed error
+  - Check the timestamped file in `logs/`
 - `KeyError: ['score', 'bucket', 'confidence'] not in index`:
-  - You loaded `features.jsonl` instead of `scored.jsonl`
+  - You loaded `features.jsonl` instead of `output/scored.jsonl`
 - `.gitignore` not working for outputs:
   - The file was already tracked; run `git rm --cached <file>`

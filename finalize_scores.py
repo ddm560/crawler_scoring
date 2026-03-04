@@ -190,12 +190,15 @@ class ScoredDomain:
     ga_ids: List[str]
 
 
-def main():
+def parse_args(argv=None):
     ap = argparse.ArgumentParser("finalize_scores.py — cluster + score + buckets")
     ap.add_argument("--features-jsonl", required=True, help="JSONL produced by extract_features.py")
     ap.add_argument("--out-csv", default="scored.csv")
     ap.add_argument("--out-jsonl", default="scored.jsonl")
-    args = ap.parse_args()
+    return ap.parse_args(argv)
+
+
+def run(args) -> int:
 
     output_dir = Path("output")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -353,6 +356,12 @@ def main():
                 jsonl_path.rename(new_jsonl)
                 print(f"Renamed outputs to {new_csv} and {new_jsonl}.")
 
+    return 0
+
+
+def main(argv=None) -> int:
+    return run(parse_args(argv))
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

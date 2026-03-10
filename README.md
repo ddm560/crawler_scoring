@@ -183,6 +183,40 @@ So a site with decent raw signals but weak crawl coverage may end up with a lowe
 
 Hard-fail rules can override the normal score when confidence is high and severe risk signals are present.
 
+## Tuning the Scoring Model (`scoring_config.json`)
+
+All scoring thresholds, penalty values, and subscore weights live in `scoring_config.json`. You can edit this file to tune the model without changing any Python code.
+
+### What the config controls
+
+- `subscore_weights`: the five weights (ads, cluster, content, legitimacy, ux) — must sum to exactly 1.0
+- `confidence`: thresholds and bonuses used to compute crawl confidence
+- `finalize`: the confidence multiplier formula (`confidence_floor` + `confidence_weight * confidence`)
+- `buckets`: score cutoffs for Pass / Manual Review / High-Risk Review / Reject
+- `content`, `ads`, `legitimacy`, `ux`, `network_risk`: individual penalty and bonus values per signal
+- `hard_fail`: thresholds for the hard-fail override (score cap and trigger conditions)
+
+### Validation
+
+On every run, the tool checks that `subscore_weights` sums to 1.0. If not, it exits immediately with a clear error listing each weight and the actual total.
+
+### Using a custom config
+
+Pass a different config file at runtime:
+
+```powershell
+python finalize_scores.py --features-jsonl features.jsonl --config my_brand_safe_config.json
+```
+
+### Using a custom config with the `.exe`
+
+There are two ways:
+
+1. Drop a `scoring_config.json` file next to `domains_scorer.exe`. The tool will use it automatically — no rebuild required.
+2. The bundled default config (baked in at build time) is used as a fallback if no override file is present.
+
+This means you can ship one `.exe` and let users adjust scoring behavior by editing a plain JSON file.
+
 ## What the Output Fields Mean (High-Level)
 
 In `output/scored.csv` / `output/scored.jsonl`, key fields are:
@@ -205,7 +239,7 @@ In `output/scored.csv` / `output/scored.jsonl`, key fields are:
 
 Recommended workflow:
 
-1. Sort `output/scored.csv` by `score` (highest to lowest)
+1. Open `output/scored.csv` — rows are already sorted highest score first
 2. Review `bucket` and `confidence`
 3. Read `reasons` for domains with very low or very high scores
 4. Manually review a sample of domains before making business decisions
@@ -406,6 +440,7 @@ dist/
   domains_scorer.exe
   input/
     domains.txt
+  scoring_config.json   ← optional: drop here to override bundled scoring defaults
 ```
 
 When the exe runs, it:
@@ -526,6 +561,7 @@ dist/
   domains_scorer
   input/
     domains.txt
+  scoring_config.json   ← optional: drop here to override bundled scoring defaults
 ```
 
 Notes:
@@ -553,5 +589,8 @@ Notes:
   - Check the timestamped file in `logs/`
 - `KeyError: ['score', 'bucket', 'confidence'] not in index`:
   - You loaded `features.jsonl` instead of `output/scored.jsonl`
+- `ValueError: subscore_weights must sum to 1.0`:
+  - Open `scoring_config.json` and check the `subscore_weights` section
+  - The five values (ads, cluster, content, legitimacy, ux) must add up to exactly 1.0
 - `.gitignore` not working for outputs:
   - The file was already tracked; run `git rm --cached <file>`

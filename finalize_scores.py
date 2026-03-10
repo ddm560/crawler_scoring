@@ -7,7 +7,33 @@ import json
 import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
+
+def load_config(config_path: Optional[Path] = None) -> dict:
+    if config_path is None:
+        if getattr(sys, "frozen", False):
+            # PyInstaller exe: check next to the .exe first (user override), then bundled default
+            exe_dir = Path(sys.executable).parent
+            user_override = exe_dir / "scoring_config.json"
+            config_path = user_override if user_override.exists() else Path(sys._MEIPASS) / "scoring_config.json"  # type: ignore[attr-defined]
+        else:
+            config_path = Path(__file__).parent / "scoring_config.json"
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    _validate_config(config, config_path)
+    return config
+
+
+def _validate_config(config: dict, config_path: Path) -> None:
+    weights = config.get("subscore_weights", {})
+    if not weights:
+        raise ValueError(f"[{config_path}] 'subscore_weights' section is missing or empty.")
+    total = sum(weights.values())
+    if abs(total - 1.0) > 0.001:
+        lines = "\n".join(f"  {k}: {v}" for k, v in weights.items())
+        raise ValueError(
+            f"[{config_path}] subscore_weights must sum to 1.0, but got {total:.6f}:\n{lines}"
+        )
 
 
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -21,52 +47,53 @@ def confidence_score(
     sitemap_found: bool,
     robots_txt_accessible: bool,
     blocked: bool,
+    cfg: dict,
 ) -> float:
-    c = 0.2
+    c = cfg["base"]
     coverage = (pages_fetched / pages_attempted) if pages_attempted else 0.0
 
-    if coverage >= 0.85:
-        c += 0.2
-    elif coverage >= 0.6:
-        c += 0.12
-    elif coverage >= 0.35:
-        c += 0.05
+    if coverage >= cfg["coverage_high_threshold"]:
+        c += cfg["coverage_high_bonus"]
+    elif coverage >= cfg["coverage_mid_threshold"]:
+        c += cfg["coverage_mid_bonus"]
+    elif coverage >= cfg["coverage_low_threshold"]:
+        c += cfg["coverage_low_bonus"]
 
-    if success_rate >= 0.85:
-        c += 0.2
-    elif success_rate >= 0.65:
-        c += 0.12
-    elif success_rate >= 0.4:
-        c += 0.05
+    if success_rate >= cfg["success_rate_high_threshold"]:
+        c += cfg["success_rate_high_bonus"]
+    elif success_rate >= cfg["success_rate_mid_threshold"]:
+        c += cfg["success_rate_mid_bonus"]
+    elif success_rate >= cfg["success_rate_low_threshold"]:
+        c += cfg["success_rate_low_bonus"]
 
     if sitemap_found:
-        c += 0.1
+        c += cfg["sitemap_bonus"]
     if robots_txt_accessible:
-        c += 0.1
-    if pages_fetched >= 5:
-        c += 0.1
-    elif pages_fetched >= 3:
-        c += 0.05
+        c += cfg["robots_txt_bonus"]
+    if pages_fetched >= cfg["pages_high_threshold"]:
+        c += cfg["pages_high_bonus"]
+    elif pages_fetched >= cfg["pages_mid_threshold"]:
+        c += cfg["pages_mid_bonus"]
 
     if blocked:
-        c -= 0.35
+        c -= cfg["blocked_penalty"]
 
     return round(clamp(c, 0.0, 1.0), 3)
 
 
-def finalize_score(base_score: float, confidence: float) -> int:
-    final = base_score * (0.55 + 0.45 * confidence)
+def finalize_score(base_score: float, confidence: float, cfg: dict) -> int:
+    final = base_score * (cfg["confidence_floor"] + cfg["confidence_weight"] * confidence)
     return int(round(clamp(final, 0, 100)))
 
 
-def pick_bucket(score: int, confidence: float) -> str:
-    if confidence < 0.6:
+def pick_bucket(score: int, confidence: float, cfg: dict) -> str:
+    if confidence < cfg["low_confidence_threshold"]:
         return "Needs Manual Review"
-    if score >= 85:
+    if score >= cfg["pass_threshold"]:
         return "Pass (Fast Track)"
-    if score >= 70:
+    if score >= cfg["manual_review_threshold"]:
         return "Manual Review"
-    if score >= 40:
+    if score >= cfg["high_risk_threshold"]:
         return "High-Risk Review"
     return "Reject / Deprioritize"
 
@@ -78,46 +105,47 @@ def subscore_content(
     ai_template_score: float,
     keyword_repetition_score: float,
     pagination_thin_ratio: float,
+    cfg: dict,
 ) -> Tuple[int, List[str]]:
     s = 100
     reasons: List[str] = []
 
-    if median_text_len < 500:
-        s -= 12
+    if median_text_len < cfg["thin_severe_threshold"]:
+        s -= cfg["thin_severe_penalty"]
         reasons.append("Thin content on sampled pages")
-    elif median_text_len < 800:
-        s -= 6
+    elif median_text_len < cfg["thin_mild_threshold"]:
+        s -= cfg["thin_mild_penalty"]
 
-    if content_uniqueness_score < 0.2:
-        s -= 28
+    if content_uniqueness_score < cfg["uniqueness_severe_threshold"]:
+        s -= cfg["uniqueness_severe_penalty"]
         reasons.append("Very low content uniqueness across sampled pages")
-    elif content_uniqueness_score < 0.35:
-        s -= 16
+    elif content_uniqueness_score < cfg["uniqueness_mild_threshold"]:
+        s -= cfg["uniqueness_mild_penalty"]
         reasons.append("Low content uniqueness across sampled pages")
 
-    if ai_template_score > 0.66:
-        s -= 22
+    if ai_template_score > cfg["ai_template_severe_threshold"]:
+        s -= cfg["ai_template_severe_penalty"]
         reasons.append("AI-like templated phrasing detected across multiple pages")
-    elif ai_template_score > 0.33:
-        s -= 10
+    elif ai_template_score > cfg["ai_template_mild_threshold"]:
+        s -= cfg["ai_template_mild_penalty"]
         reasons.append("Repeated AI-like templated phrasing detected")
 
-    if keyword_repetition_score > 0.45:
-        s -= 18
+    if keyword_repetition_score > cfg["keyword_rep_severe_threshold"]:
+        s -= cfg["keyword_rep_severe_penalty"]
         reasons.append("Excessive keyword repetition detected")
-    elif keyword_repetition_score > 0.3:
-        s -= 8
+    elif keyword_repetition_score > cfg["keyword_rep_mild_threshold"]:
+        s -= cfg["keyword_rep_mild_penalty"]
         reasons.append("Elevated keyword repetition detected")
 
-    if pagination_thin_ratio > 0.5:
-        s -= 18
+    if pagination_thin_ratio > cfg["pagination_severe_threshold"]:
+        s -= cfg["pagination_severe_penalty"]
         reasons.append("Many sampled pages look like thin pagination pages")
-    elif pagination_thin_ratio > 0.2:
-        s -= 8
+    elif pagination_thin_ratio > cfg["pagination_mild_threshold"]:
+        s -= cfg["pagination_mild_penalty"]
         reasons.append("Some sampled pages look like thin pagination pages")
 
     if not has_article_schema:
-        s -= 6
+        s -= cfg["no_article_schema_penalty"]
         reasons.append("No obvious Article/News structured data detected")
 
     return int(clamp(s, 0, 100)), reasons
@@ -136,62 +164,66 @@ def subscore_ads(
     sellers_json_checked: int,
     sellers_json_mismatches: int,
     sellers_json_reasons: List[str],
+    cfg: dict,
 ) -> Tuple[int, List[str]]:
     s = 100
     reasons: List[str] = []
 
-    if ad_count > 90:
-        s -= 35
+    if ad_count > cfg["ad_count_severe_threshold"]:
+        s -= cfg["ad_count_severe_penalty"]
         reasons.append("Extremely high ad-container density")
-    elif ad_count > 50:
-        s -= 22
+    elif ad_count > cfg["ad_count_mild_threshold"]:
+        s -= cfg["ad_count_mild_penalty"]
         reasons.append("High ad-container density")
 
-    if third_party_scripts > 35:
-        s -= 18
+    if third_party_scripts > cfg["third_party_scripts_severe_threshold"]:
+        s -= cfg["third_party_scripts_severe_penalty"]
         reasons.append("Very high third-party script load")
-    elif third_party_scripts > 20:
-        s -= 8
+    elif third_party_scripts > cfg["third_party_scripts_mild_threshold"]:
+        s -= cfg["third_party_scripts_mild_penalty"]
         reasons.append("High third-party script load")
 
-    if external_ratio > 0.65:
-        s -= 16
+    if external_ratio > cfg["external_ratio_severe_threshold"]:
+        s -= cfg["external_ratio_severe_penalty"]
         reasons.append("High outbound/external link ratio")
-    elif external_ratio > 0.45:
-        s -= 8
+    elif external_ratio > cfg["external_ratio_mild_threshold"]:
+        s -= cfg["external_ratio_mild_penalty"]
         reasons.append("Elevated outbound/external link ratio")
 
     if affiliate_markers:
-        s -= 14
+        s -= cfg["affiliate_penalty"]
         reasons.append("Affiliate/arbitrage markers detected")
 
-    if ads_txt_quality_score < 45:
-        s -= 24
+    if ads_txt_quality_score < cfg["ads_txt_quality_severe_threshold"]:
+        s -= cfg["ads_txt_quality_severe_penalty"]
         reasons.append("Low ads.txt structural quality")
-    elif ads_txt_quality_score < 70:
-        s -= 12
+    elif ads_txt_quality_score < cfg["ads_txt_quality_mild_threshold"]:
+        s -= cfg["ads_txt_quality_mild_penalty"]
         reasons.append("Mixed ads.txt structural quality")
 
-    if reseller_ratio > 0.7:
-        s -= 18
+    if reseller_ratio > cfg["reseller_ratio_severe_threshold"]:
+        s -= cfg["reseller_ratio_severe_penalty"]
         reasons.append("Reseller-heavy ads.txt supply chain")
-    elif reseller_ratio > 0.5:
-        s -= 8
+    elif reseller_ratio > cfg["reseller_ratio_mild_threshold"]:
+        s -= cfg["reseller_ratio_mild_penalty"]
         reasons.append("Elevated reseller ratio in ads.txt")
 
     if direct_relationship_count == 0 and ads_txt_total_lines > 0:
-        s -= 18
+        s -= cfg["no_direct_penalty"]
         reasons.append("ads.txt contains no DIRECT relationships")
 
-    if ads_txt_total_lines > 150:
-        s -= 12
+    if ads_txt_total_lines > cfg["large_ads_txt_threshold"]:
+        s -= cfg["large_ads_txt_penalty"]
         reasons.append("Very large ads.txt file")
-    if ads_txt_duplicate_count >= 3:
-        s -= 12
+    if ads_txt_duplicate_count >= cfg["duplicate_ads_txt_threshold"]:
+        s -= cfg["duplicate_ads_txt_penalty"]
         reasons.append("Suspicious duplicate entries in ads.txt")
 
     if sellers_json_checked and sellers_json_mismatches:
-        penalty = min(20, sellers_json_mismatches * 5)
+        penalty = min(
+            cfg["sellers_json_mismatch_max_penalty"],
+            sellers_json_mismatches * cfg["sellers_json_mismatch_penalty_per"],
+        )
         s -= penalty
         reasons.extend(sellers_json_reasons[:3])
 
@@ -204,59 +236,66 @@ def subscore_legitimacy(
     has_privacy_terms: bool,
     looks_parked: bool,
     domain_age_years: float,
+    cfg: dict,
 ) -> Tuple[int, List[str]]:
-    s = 70
+    s = cfg["base"]
     reasons: List[str] = []
 
     if has_about:
-        s += 8
+        s += cfg["has_about_bonus"]
     else:
         reasons.append("No clear About page found")
 
     if has_contact:
-        s += 8
+        s += cfg["has_contact_bonus"]
     else:
         reasons.append("No clear Contact page found")
 
     if has_privacy_terms:
-        s += 8
+        s += cfg["has_privacy_terms_bonus"]
     else:
         reasons.append("No clear Privacy/Terms links found")
 
     if looks_parked:
-        s -= 35
+        s -= cfg["looks_parked_penalty"]
         reasons.append("Site appears parked or listed for sale")
 
     if domain_age_years >= 0:
-        if domain_age_years < 1:
-            s -= 22
+        if domain_age_years < cfg["young_domain_threshold"]:
+            s -= cfg["young_domain_penalty"]
             reasons.append("Very young domain (<1 year)")
-        elif domain_age_years < 2:
-            s -= 12
+        elif domain_age_years < cfg["mid_domain_threshold"]:
+            s -= cfg["mid_domain_penalty"]
             reasons.append("Young domain (1-2 years)")
-        elif domain_age_years >= 5:
-            s += 6
+        elif domain_age_years >= cfg["mature_domain_threshold"]:
+            s += cfg["mature_domain_bonus"]
     else:
         reasons.append("Domain age unavailable")
 
     return int(clamp(s, 0, 100)), reasons
 
 
-def subscore_ux(push: bool, interstitial: bool, autorefresh: bool, has_mfa_keywords: bool) -> Tuple[int, List[str]]:
+def subscore_ux(
+    push: bool,
+    interstitial: bool,
+    autorefresh: bool,
+    has_mfa_keywords: bool,
+    cfg: dict,
+) -> Tuple[int, List[str]]:
     s = 100
     reasons: List[str] = []
 
     if push:
-        s -= 25
+        s -= cfg["push_penalty"]
         reasons.append("Push/notification prompting keywords detected")
     if interstitial:
-        s -= 35
+        s -= cfg["interstitial_penalty"]
         reasons.append("Interstitial/overlay/dark-pattern keywords detected")
     if autorefresh:
-        s -= 15
+        s -= cfg["autorefresh_penalty"]
         reasons.append("Auto-refresh / ad refresh keywords detected")
     if has_mfa_keywords:
-        s -= 20
+        s -= cfg["mfa_penalty"]
         reasons.append("MFA-style monetization keywords detected")
 
     return int(clamp(s, 0, 100)), reasons
@@ -269,6 +308,7 @@ def compute_network_risk_score(
     counts_adsense: Dict[str, int],
     counts_gtm: Dict[str, int],
     template_sizes: Dict[int, int],
+    cfg: dict,
 ) -> Tuple[int, int, List[str]]:
     risk = 0
     reasons: List[str] = []
@@ -277,62 +317,62 @@ def compute_network_risk_score(
     for pid in adsense_pub_ids:
         n = counts_adsense.get(pid, 0)
         cluster_size = max(cluster_size, n)
-        if n > 75:
-            risk += 45
+        if n > cfg["adsense_severe_threshold"]:
+            risk += cfg["adsense_severe_penalty"]
             reasons.append(f"AdSense publisher ID shared across {n} domains ({pid})")
             break
-        if n > 25:
-            risk += 28
+        if n > cfg["adsense_mild_threshold"]:
+            risk += cfg["adsense_mild_penalty"]
             reasons.append(f"AdSense publisher ID shared across {n} domains ({pid})")
             break
 
     for gid in gtm_ids:
         n = counts_gtm.get(gid, 0)
         cluster_size = max(cluster_size, n)
-        if n > 250:
-            risk += 35
+        if n > cfg["gtm_severe_threshold"]:
+            risk += cfg["gtm_severe_penalty"]
             reasons.append(f"GTM container shared across {n} domains ({gid})")
             break
-        if n > 80:
-            risk += 20
+        if n > cfg["gtm_mild_threshold"]:
+            risk += cfg["gtm_mild_penalty"]
             reasons.append(f"GTM container shared across {n} domains ({gid})")
             break
 
     template_cluster = template_sizes.get(homepage_simhash, 0)
     cluster_size = max(cluster_size, template_cluster)
-    if template_cluster > 120:
-        risk += 35
+    if template_cluster > cfg["template_severe_threshold"]:
+        risk += cfg["template_severe_penalty"]
         reasons.append(f"Homepage template signature appears on {template_cluster} domains")
-    elif template_cluster > 40:
-        risk += 20
+    elif template_cluster > cfg["template_mild_threshold"]:
+        risk += cfg["template_mild_penalty"]
         reasons.append(f"Homepage template signature appears on {template_cluster} domains")
 
-    if cluster_size > 100:
-        risk += 10
-    elif cluster_size > 40:
-        risk += 5
+    if cluster_size > cfg["cluster_large_threshold"]:
+        risk += cfg["cluster_large_penalty"]
+    elif cluster_size > cfg["cluster_mid_threshold"]:
+        risk += cfg["cluster_mid_penalty"]
 
     return int(clamp(risk, 0, 100)), int(cluster_size), reasons
 
 
-def should_hard_fail(obj: dict, confidence: float) -> Tuple[bool, List[str]]:
+def should_hard_fail(obj: dict, confidence: float, cfg: dict) -> Tuple[bool, List[str]]:
     reasons: List[str] = []
-    if confidence < 0.7:
+    if confidence < cfg["min_confidence"]:
         return False, reasons
 
     if bool(obj.get("looks_parked", False)):
         reasons.append("Parked / for-sale domain signal")
 
-    if int(obj.get("median_ad_container_count", 0)) > 90:
+    if int(obj.get("median_ad_container_count", 0)) > cfg["max_ad_containers"]:
         reasons.append("Extremely high ad-container density")
 
     if bool(obj.get("has_mfa_keywords", False)):
         reasons.append("Strong MFA keyword pattern")
 
     if (
-        float(obj.get("reseller_ratio", 0.0)) > 0.85
+        float(obj.get("reseller_ratio", 0.0)) > cfg["reseller_ratio_threshold"]
         and int(obj.get("direct_relationship_count", 0)) == 0
-        and int(obj.get("ads_txt_total_lines", 0)) > 25
+        and int(obj.get("ads_txt_total_lines", 0)) > cfg["min_ads_txt_lines_for_reseller_check"]
     ):
         reasons.append("Massive reseller-only ads.txt with no DIRECT relationships")
 
@@ -374,10 +414,29 @@ def parse_args(argv=None):
     ap.add_argument("--features-jsonl", required=True, help="JSONL produced by extract_features.py")
     ap.add_argument("--out-csv", default="scored.csv")
     ap.add_argument("--out-jsonl", default="scored.jsonl")
+    ap.add_argument(
+        "--config",
+        default=None,
+        help="Path to scoring config JSON (default: scoring_config.json next to this script/exe)",
+    )
     return ap.parse_args(argv)
 
 
 def run(args) -> int:
+    config_path = Path(args.config) if args.config else None
+    config = load_config(config_path)
+
+    weights = config["subscore_weights"]
+    conf_cfg = config["confidence"]
+    finalize_cfg = config["finalize"]
+    bucket_cfg = config["buckets"]
+    content_cfg = config["content"]
+    ads_cfg = config["ads"]
+    legit_cfg = config["legitimacy"]
+    ux_cfg = config["ux"]
+    network_cfg = config["network_risk"]
+    hard_fail_cfg = config["hard_fail"]
+
     output_dir = Path("output")
     output_dir.mkdir(parents=True, exist_ok=True)
     out_csv_path = output_dir / Path(args.out_csv).name
@@ -413,6 +472,7 @@ def run(args) -> int:
             sitemap_found=bool(obj.get("sitemap_found", False)),
             robots_txt_accessible=bool(obj.get("robots_txt_accessible", False)),
             blocked=bool(obj.get("blocked_or_captcha", False)),
+            cfg=conf_cfg,
         )
 
         content_s, content_r = subscore_content(
@@ -422,6 +482,7 @@ def run(args) -> int:
             ai_template_score=float(obj.get("ai_template_score", 0.0)),
             keyword_repetition_score=float(obj.get("keyword_repetition_score", 0.0)),
             pagination_thin_ratio=float(obj.get("pagination_thin_ratio", 0.0)),
+            cfg=content_cfg,
         )
 
         ads_s, ads_r = subscore_ads(
@@ -437,6 +498,7 @@ def run(args) -> int:
             sellers_json_checked=int(obj.get("sellers_json_checked", 0)),
             sellers_json_mismatches=int(obj.get("sellers_json_mismatches", 0)),
             sellers_json_reasons=list(obj.get("sellers_json_reasons", [])),
+            cfg=ads_cfg,
         )
 
         legit_s, legit_r = subscore_legitimacy(
@@ -445,6 +507,7 @@ def run(args) -> int:
             has_privacy_terms=bool(obj.get("has_privacy_terms", False)),
             looks_parked=bool(obj.get("looks_parked", False)),
             domain_age_years=float(obj.get("domain_age_years", -1.0)),
+            cfg=legit_cfg,
         )
 
         ux_s, ux_r = subscore_ux(
@@ -452,6 +515,7 @@ def run(args) -> int:
             interstitial=bool(obj.get("has_interstitial_keywords", False)),
             autorefresh=bool(obj.get("has_autorefresh_keywords", False)),
             has_mfa_keywords=bool(obj.get("has_mfa_keywords", False)),
+            cfg=ux_cfg,
         )
 
         network_risk_score, cluster_size, cluster_r = compute_network_risk_score(
@@ -461,23 +525,24 @@ def run(args) -> int:
             counts_adsense=counts_adsense,
             counts_gtm=counts_gtm,
             template_sizes=template_sizes,
+            cfg=network_cfg,
         )
 
         cluster_score = 100 - network_risk_score
         base = (
-            0.35 * ads_s
-            + 0.30 * cluster_score
-            + 0.20 * content_s
-            + 0.10 * legit_s
-            + 0.05 * ux_s
+            weights["ads"] * ads_s
+            + weights["cluster"] * cluster_score
+            + weights["content"] * content_s
+            + weights["legitimacy"] * legit_s
+            + weights["ux"] * ux_s
         )
 
-        final = finalize_score(base, conf)
-        bucket = pick_bucket(final, conf)
+        final = finalize_score(base, conf, finalize_cfg)
+        bucket = pick_bucket(final, conf, bucket_cfg)
 
-        hard_fail_triggered, hard_fail_reasons = should_hard_fail(obj, conf)
+        hard_fail_triggered, hard_fail_reasons = should_hard_fail(obj, conf, hard_fail_cfg)
         if hard_fail_triggered:
-            final = min(final, 35)
+            final = min(final, hard_fail_cfg["score_cap"])
             bucket = "Reject / Deprioritize"
 
         reasons: List[str] = []
@@ -549,7 +614,7 @@ def run(args) -> int:
                 "reasons",
             ]
         )
-        for row in sorted(scored, key=lambda x: x.score):
+        for row in sorted(scored, key=lambda x: x.score, reverse=True):
             w.writerow(
                 [
                     row.input_domain,

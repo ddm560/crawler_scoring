@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import sys
+import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -409,6 +410,20 @@ class ScoredDomain:
     hard_fail_triggered: bool
 
 
+def render_progress_bar(completed: int, total: int, started: float, width: int = 28) -> None:
+    total = max(1, total)
+    ratio = completed / total
+    filled = int(round(ratio * width))
+    bar = "#" * filled + "-" * (width - filled)
+    elapsed = max(0.001, time.time() - started)
+    rate = completed / elapsed
+    print(
+        f"\r[{bar}] {completed}/{total} ({ratio * 100:5.1f}%) | {rate:.0f} domains/s",
+        end="",
+        flush=True,
+    )
+
+
 def parse_args(argv=None):
     ap = argparse.ArgumentParser("finalize_scores.py — cluster + score + buckets")
     ap.add_argument("--features-jsonl", required=True, help="JSONL produced by extract_features.py")
@@ -463,8 +478,11 @@ def run(args) -> int:
             template_sizes[h] = template_sizes.get(h, 0) + 1
 
     scored: List[ScoredDomain] = []
+    total = len(rows)
+    started = time.time()
+    print(f"Scoring {total} domains...")
 
-    for obj in rows:
+    for i, obj in enumerate(rows, 1):
         conf = confidence_score(
             pages_attempted=int(obj.get("pages_attempted", 0)),
             pages_fetched=int(obj.get("pages_fetched", 0)),
@@ -553,6 +571,7 @@ def run(args) -> int:
                 reasons.append(reason)
         reasons = reasons[:10]
 
+        render_progress_bar(i, total, started)
         scored.append(
             ScoredDomain(
                 input_domain=obj.get("input_domain", ""),
@@ -580,6 +599,8 @@ def run(args) -> int:
                 hard_fail_triggered=bool(hard_fail_triggered),
             )
         )
+
+    print(flush=True)
 
     with open(out_jsonl_path, "w", encoding="utf-8") as f:
         for row in scored:

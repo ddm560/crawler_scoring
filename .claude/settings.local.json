@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls c:UsersteddiOneDriveDocumentsGitHubcrawlercrawler_scoring*.py)",
+      "Bash(grep \"\\\\.py$\")"
+    ]
+  }
+}

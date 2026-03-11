@@ -1004,7 +1004,7 @@ def parse_args(argv=None):
     p.add_argument("--timeout", type=float, default=10.0, help="Per-request timeout seconds")
     p.add_argument("--max-bytes", type=int, default=3_000_000, help="Max bytes per HTML response")
     p.add_argument("--resume", action="store_true", help="Skip domains already in out-jsonl")
-    p.add_argument("--log-every", type=int, default=100, help="Progress log interval (domains)")
+    p.add_argument("--log-every", type=int, default=1, help="Progress log interval (domains)")
     p.add_argument("--user-agent", default="InventoryVettingBot/1.0 (+contact: ops@example.com)", help="User-Agent string")
     return p.parse_args(argv)
 

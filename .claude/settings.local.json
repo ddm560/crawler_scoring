@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(ls c:UsersteddiOneDriveDocumentsGitHubcrawlercrawler_scoring*.py)",
-      "Bash(grep \"\\\\.py$\")"
+      "Bash(grep \"\\\\.py$\")",
+      "Bash(grep -E \"\\\\.\\(py|json|ps1|command|md|spec\\)$\")",
+      "Bash(find c:UsersteddiOneDriveDocumentsGitHubcrawlercrawler_scoring -name test* -o -name *test.py -o -name pytest.ini)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(find c:UsersteddiOneDriveDocumentsGitHubcrawlercrawler_scoring -maxdepth 2 -type f -name *.json)",
+      "Bash(.venv/Scripts/python.exe -m pip install pytest -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -v)"
     ]
   }
 }

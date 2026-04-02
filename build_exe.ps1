@@ -1,9 +1,6 @@
 $python = ".\.venv\Scripts\python.exe"
 
-& $python -m PyInstaller `
-    --onefile `
-    --name domains_scorer `
-    app_cli.py
+& $python -m PyInstaller domains_scorer.spec
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "PyInstaller build failed."

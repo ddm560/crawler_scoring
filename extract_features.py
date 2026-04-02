@@ -37,8 +37,8 @@ INTERSTITIAL_KEYWORDS = re.compile(r"overlay|modal|interstitial|subscribe to con
 AUTOREFRESH_KEYWORDS = re.compile(r"setinterval|refresh.*ad|googletag.*refresh", re.IGNORECASE)
 
 AD_CONTAINER_PATTERNS = [
-    re.compile(r"\b(ad|ads|advert|sponsor)\b", re.IGNORECASE),
-    re.compile(r"\bgpt\b", re.IGNORECASE),
+    re.compile(r"(?:^|[-_.])(ad|ads|advert|sponsor)(?:[-_.]|$)", re.IGNORECASE),
+    re.compile(r"(?:^|[-_.])gpt(?:[-_.]|$)", re.IGNORECASE),
     re.compile(r"google_ads_iframe", re.IGNORECASE),
     re.compile(r"\bprebid\b", re.IGNORECASE),
 ]

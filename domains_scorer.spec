@@ -5,7 +5,7 @@ a = Analysis(
     ['app_cli.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('scoring_config.json', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

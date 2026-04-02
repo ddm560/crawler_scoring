@@ -11,9 +11,6 @@ if [[ ! -x "$PYTHON" ]]; then
 fi
 
 cd "$SCRIPT_DIR"
-"$PYTHON" -m PyInstaller \
-  --onefile \
-  --name domains_scorer \
-  app_cli.py
+"$PYTHON" -m PyInstaller domains_scorer.spec
 
 echo "Build complete: dist/domains_scorer"

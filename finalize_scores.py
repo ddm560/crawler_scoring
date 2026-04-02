@@ -162,13 +162,21 @@ def subscore_ads(
     direct_relationship_count: int,
     ads_txt_total_lines: int,
     ads_txt_duplicate_count: int,
+    ads_txt_unique_ssp_domains: int,
     sellers_json_checked: int,
     sellers_json_mismatches: int,
     sellers_json_reasons: List[str],
     cfg: dict,
 ) -> Tuple[int, List[str]]:
-    s = 100
+    s = cfg.get("base", 100)
     reasons: List[str] = []
+
+    if direct_relationship_count >= cfg["direct_count_bonus_threshold"]:
+        s += cfg["direct_count_bonus"]
+    if ads_txt_unique_ssp_domains >= cfg["ssp_diversity_bonus_threshold"]:
+        s += cfg["ssp_diversity_bonus"]
+    if ads_txt_total_lines > 0 and ads_txt_duplicate_count == 0:
+        s += cfg["clean_ads_txt_bonus"]
 
     if ad_count > cfg["ad_count_severe_threshold"]:
         s -= cfg["ad_count_severe_penalty"]
@@ -262,9 +270,12 @@ def subscore_legitimacy(
         reasons.append("Site appears parked or listed for sale")
 
     if domain_age_years >= 0:
-        if domain_age_years < cfg["young_domain_threshold"]:
+        if domain_age_years < cfg["very_young_domain_threshold"]:
+            s -= cfg["very_young_domain_penalty"]
+            reasons.append("Very young domain (<6 months)")
+        elif domain_age_years < cfg["young_domain_threshold"]:
             s -= cfg["young_domain_penalty"]
-            reasons.append("Very young domain (<1 year)")
+            reasons.append("Young domain (6-12 months)")
         elif domain_age_years < cfg["mid_domain_threshold"]:
             s -= cfg["mid_domain_penalty"]
             reasons.append("Young domain (1-2 years)")
@@ -513,6 +524,7 @@ def run(args) -> int:
             direct_relationship_count=int(obj.get("direct_relationship_count", 0)),
             ads_txt_total_lines=int(obj.get("ads_txt_total_lines", 0)),
             ads_txt_duplicate_count=int(obj.get("ads_txt_duplicate_count", 0)),
+            ads_txt_unique_ssp_domains=int(obj.get("ads_txt_unique_ssp_domains", 0)),
             sellers_json_checked=int(obj.get("sellers_json_checked", 0)),
             sellers_json_mismatches=int(obj.get("sellers_json_mismatches", 0)),
             sellers_json_reasons=list(obj.get("sellers_json_reasons", [])),

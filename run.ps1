@@ -1,44 +1,19 @@
-$python = ".\.venv\Scripts\python.exe"
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$Python = Join-Path $ScriptDir ".venv\Scripts\python.exe"
 
-function Read-WithDefault {
-    param(
-        [string]$Prompt,
-        [string]$DefaultValue
-    )
-
-    $value = Read-Host "$Prompt [$DefaultValue]"
-    if ([string]::IsNullOrWhiteSpace($value)) {
-        return $DefaultValue
-    }
-    return $value.Trim()
+if (-not (Test-Path $Python)) {
+    Write-Error "Python virtual environment not found at $Python"
+    Write-Host "Create it first with: py -3.12 -m venv .venv"
+    Read-Host "Press Enter to exit"
+    exit 1
 }
 
-$inputFile = Read-WithDefault -Prompt "Input domains file" -DefaultValue ".\input\domains.txt"
-$featuresFile = Read-WithDefault -Prompt "Features output JSONL" -DefaultValue "features.jsonl"
-$concurrency = Read-WithDefault -Prompt "Concurrency" -DefaultValue "60"
-$pages = Read-WithDefault -Prompt "Pages per domain" -DefaultValue "6"
-$timeout = Read-WithDefault -Prompt "Timeout (seconds)" -DefaultValue "10"
-$resumeAnswer = Read-WithDefault -Prompt "Resume from existing features file? (Y/N)" -DefaultValue "Y"
+Set-Location $ScriptDir
+& $Python app_cli.py
+$Status = $LASTEXITCODE
 
-$args = @(
-    "extract_features.py",
-    "--input", $inputFile,
-    "--out-jsonl", $featuresFile,
-    "--concurrency", $concurrency,
-    "--pages", $pages,
-    "--timeout", $timeout
-)
-
-if ($resumeAnswer -match "^(y|yes)$") {
-    $args += "--resume"
+if ($Status -ne 0) {
+    Read-Host "Application failed. Press Enter to exit"
 }
 
-& $python @args
-
-if ($LASTEXITCODE -eq 0) {
-    & $python finalize_scores.py --features-jsonl $featuresFile
-}
-else {
-    Write-Error "Feature extraction failed. Scoring step was skipped."
-    exit $LASTEXITCODE
-}
+exit $Status

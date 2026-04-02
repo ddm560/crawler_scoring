@@ -1,0 +1,157 @@
+{
+  "_comment": "All scoring thresholds and weights for finalize_scores.py. Edit here to tune scoring without touching code.",
+
+  "subscore_weights": {
+    "ads": 0.30,
+    "cluster": 0.2,
+    "content": 0.25,
+    "legitimacy": 0.15,
+    "ux": 0.1
+  },
+
+  "confidence": {
+    "base": 0.2,
+    "coverage_high_threshold": 0.85,
+    "coverage_high_bonus": 0.2,
+    "coverage_mid_threshold": 0.6,
+    "coverage_mid_bonus": 0.12,
+    "coverage_low_threshold": 0.35,
+    "coverage_low_bonus": 0.05,
+    "success_rate_high_threshold": 0.85,
+    "success_rate_high_bonus": 0.2,
+    "success_rate_mid_threshold": 0.65,
+    "success_rate_mid_bonus": 0.12,
+    "success_rate_low_threshold": 0.4,
+    "success_rate_low_bonus": 0.05,
+    "sitemap_bonus": 0.05,
+    "robots_txt_bonus": 0.05,
+    "pages_high_threshold": 5,
+    "pages_high_bonus": 0.1,
+    "pages_mid_threshold": 3,
+    "pages_mid_bonus": 0.05,
+    "blocked_penalty": 0.35
+  },
+
+  "finalize": {
+    "confidence_floor": 0.55,
+    "confidence_weight": 0.45
+  },
+
+  "buckets": {
+    "low_confidence_threshold": 0.6,
+    "pass_threshold": 85,
+    "manual_review_threshold": 70,
+    "high_risk_threshold": 40
+  },
+
+  "content": {
+    "thin_severe_threshold": 500,
+    "thin_severe_penalty": 12,
+    "thin_mild_threshold": 800,
+    "thin_mild_penalty": 6,
+    "uniqueness_severe_threshold": 0.2,
+    "uniqueness_severe_penalty": 28,
+    "uniqueness_mild_threshold": 0.35,
+    "uniqueness_mild_penalty": 16,
+    "ai_template_severe_threshold": 0.66,
+    "ai_template_severe_penalty": 22,
+    "ai_template_mild_threshold": 0.33,
+    "ai_template_mild_penalty": 10,
+    "keyword_rep_severe_threshold": 0.45,
+    "keyword_rep_severe_penalty": 18,
+    "keyword_rep_mild_threshold": 0.3,
+    "keyword_rep_mild_penalty": 8,
+    "pagination_severe_threshold": 0.5,
+    "pagination_severe_penalty": 18,
+    "pagination_mild_threshold": 0.2,
+    "pagination_mild_penalty": 8,
+    "no_article_schema_penalty": 0
+  },
+
+  "ads": {
+    "base": 82,
+    "direct_count_bonus_threshold": 3,
+    "direct_count_bonus": 8,
+    "ssp_diversity_bonus_threshold": 5,
+    "ssp_diversity_bonus": 6,
+    "clean_ads_txt_bonus": 4,
+    "ad_count_severe_threshold": 90,
+    "ad_count_severe_penalty": 35,
+    "ad_count_mild_threshold": 50,
+    "ad_count_mild_penalty": 22,
+    "third_party_scripts_severe_threshold": 35,
+    "third_party_scripts_severe_penalty": 18,
+    "third_party_scripts_mild_threshold": 20,
+    "third_party_scripts_mild_penalty": 8,
+    "external_ratio_severe_threshold": 0.65,
+    "external_ratio_severe_penalty": 16,
+    "external_ratio_mild_threshold": 0.45,
+    "external_ratio_mild_penalty": 8,
+    "affiliate_penalty": 14,
+    "ads_txt_quality_severe_threshold": 45,
+    "ads_txt_quality_severe_penalty": 24,
+    "ads_txt_quality_mild_threshold": 70,
+    "ads_txt_quality_mild_penalty": 12,
+    "reseller_ratio_severe_threshold": 0.7,
+    "reseller_ratio_severe_penalty": 18,
+    "reseller_ratio_mild_threshold": 0.5,
+    "reseller_ratio_mild_penalty": 8,
+    "no_direct_penalty": 18,
+    "large_ads_txt_threshold": 150,
+    "large_ads_txt_penalty": 12,
+    "duplicate_ads_txt_threshold": 3,
+    "duplicate_ads_txt_penalty": 12,
+    "sellers_json_mismatch_penalty_per": 5,
+    "sellers_json_mismatch_max_penalty": 20
+  },
+
+  "legitimacy": {
+    "base": 70,
+    "has_about_bonus": 8,
+    "has_contact_bonus": 8,
+    "has_privacy_terms_bonus": 8,
+    "looks_parked_penalty": 35,
+    "very_young_domain_threshold": 0.5,
+    "very_young_domain_penalty": 22,
+    "young_domain_threshold": 1,
+    "young_domain_penalty": 12,
+    "mid_domain_threshold": 2,
+    "mid_domain_penalty": 8,
+    "mature_domain_threshold": 5,
+    "mature_domain_bonus": 6
+  },
+
+  "ux": {
+    "push_penalty": 25,
+    "interstitial_penalty": 35,
+    "autorefresh_penalty": 15,
+    "mfa_penalty": 20
+  },
+
+  "network_risk": {
+    "adsense_severe_threshold": 75,
+    "adsense_severe_penalty": 45,
+    "adsense_mild_threshold": 25,
+    "adsense_mild_penalty": 28,
+    "gtm_severe_threshold": 250,
+    "gtm_severe_penalty": 35,
+    "gtm_mild_threshold": 80,
+    "gtm_mild_penalty": 20,
+    "template_severe_threshold": 120,
+    "template_severe_penalty": 35,
+    "template_mild_threshold": 40,
+    "template_mild_penalty": 20,
+    "cluster_large_threshold": 100,
+    "cluster_large_penalty": 10,
+    "cluster_mid_threshold": 40,
+    "cluster_mid_penalty": 5
+  },
+
+  "hard_fail": {
+    "min_confidence": 0.7,
+    "max_ad_containers": 90,
+    "reseller_ratio_threshold": 0.85,
+    "min_ads_txt_lines_for_reseller_check": 25,
+    "score_cap": 35
+  }
+}

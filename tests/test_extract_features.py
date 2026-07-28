@@ -13,6 +13,10 @@ from extract_features import (
     compute_ai_template_score,
     compute_keyword_repetition_score,
     compute_pagination_thin_ratio,
+    PUSH_KEYWORDS,
+    INTERSTITIAL_KEYWORDS,
+    AUTOREFRESH_KEYWORDS,
+    MFA_KEYWORDS,
 )
 
 
@@ -256,3 +260,36 @@ def test_pagination_thick_pages_not_flagged():
     urls = ["https://example.com/page/1", "https://example.com/page/2"]
     lens = [2000, 3000]  # above 700 threshold
     assert compute_pagination_thin_ratio(urls, lens) == 0.0
+
+
+# ---------- UX / MFA keyword regexes (tightened, run on visible text) ----------
+
+def test_interstitial_ignores_css_class_names():
+    # "modal"/"overlay" are ubiquitous CSS class names and must not trigger.
+    assert INTERSTITIAL_KEYWORDS.search("modal overlay lightbox dropdown") is None
+
+def test_interstitial_matches_real_dark_patterns():
+    assert INTERSTITIAL_KEYWORDS.search("Subscribe to continue reading") is not None
+    assert INTERSTITIAL_KEYWORDS.search("Please disable your ad blocker") is not None
+
+def test_push_ignores_bare_words():
+    assert PUSH_KEYWORDS.search("notification bell push down menu") is None
+
+def test_push_matches_optin_prompt():
+    assert PUSH_KEYWORDS.search("Allow notifications to receive updates") is not None
+    assert PUSH_KEYWORDS.search("Click Allow to subscribe to notifications") is not None
+
+def test_autorefresh_ignores_plain_setinterval():
+    assert AUTOREFRESH_KEYWORDS.search("setInterval(update, 1000)") is None
+
+def test_autorefresh_matches_ad_refresh():
+    assert AUTOREFRESH_KEYWORDS.search("googletag.pubads().refresh()") is not None
+    assert AUTOREFRESH_KEYWORDS.search("var adRefresh = setInterval") is not None
+
+def test_mfa_ignores_common_related_posts():
+    # "you may also like" is on countless ordinary publishers; no longer an MFA tell.
+    assert MFA_KEYWORDS.search("You may also like these articles") is None
+
+def test_mfa_matches_arbitrage_grids():
+    assert MFA_KEYWORDS.search("Related Searches") is not None
+    assert MFA_KEYWORDS.search("Sponsored Listings for you") is not None

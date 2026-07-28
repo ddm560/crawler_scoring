@@ -32,9 +32,30 @@ GTM_RE = re.compile(r"\bGTM-[A-Z0-9]+\b", re.IGNORECASE)
 GA4_RE = re.compile(r"\bG-[A-Z0-9]{6,}\b")
 UA_RE = re.compile(r"\bUA-\d{4,}-\d+\b")
 
-PUSH_KEYWORDS = re.compile(r"push|notification|subscribe to notifications", re.IGNORECASE)
-INTERSTITIAL_KEYWORDS = re.compile(r"overlay|modal|interstitial|subscribe to continue|disable adblock", re.IGNORECASE)
-AUTOREFRESH_KEYWORDS = re.compile(r"setinterval|refresh.*ad|googletag.*refresh", re.IGNORECASE)
+# Push/interstitial/MFA are matched against VISIBLE TEXT (the prompt/copy a user
+# actually sees), so bare markup tokens like "push", "modal" or "overlay" — which
+# appear as CSS class names on almost every site — no longer trigger them.
+PUSH_KEYWORDS = re.compile(
+    r"allow notifications|enable notifications|subscribe to notifications|"
+    r"turn on notifications|receive (?:push )?notifications|"
+    r"allow .{0,30}? to send you notifications|click allow",
+    re.IGNORECASE,
+)
+INTERSTITIAL_KEYWORDS = re.compile(
+    r"subscribe to continue|subscribe to read|register to continue|"
+    r"disable your ad ?blocker|disable ad ?block|turn off your ad ?blocker|"
+    r"please disable adblock|whitelist (?:us|this site)|"
+    r"you have reached your (?:free )?article limit|continue to (?:the )?site",
+    re.IGNORECASE,
+)
+# Ad-refresh is script behaviour, matched against raw HTML but bound to real
+# ad-refresh idioms instead of the bare "setinterval" / "refresh.*ad" that fired
+# on ordinary JavaScript.
+AUTOREFRESH_KEYWORDS = re.compile(
+    r"pubads\(\)\.refresh|googletag\.pubads\([^)]*\)\.refresh|"
+    r"\bad[_-]?refresh\b|\brefresh[_-]?ads?\b|\brefreshinterval\b",
+    re.IGNORECASE,
+)
 
 AD_CONTAINER_PATTERNS = [
     re.compile(r"(?:^|[-_.])(ad|ads|advert|sponsor)(?:[-_.]|$)", re.IGNORECASE),
@@ -45,7 +66,9 @@ AD_CONTAINER_PATTERNS = [
 
 AFFILIATE_MARKERS = ["ref=", "aff=", "affiliate", "utm_aff", "partner=", "tracking", "clickid="]
 MFA_KEYWORDS = re.compile(
-    r"related searches|sponsored listings|top picks for you|best .* deals|you may also like|compare now",
+    r"related searches|sponsored listings|sponsored results|popular searches|"
+    r"trending searches|search ads|top picks for you|"
+    r"find the best deals|compare (?:prices|deals) now",
     re.IGNORECASE,
 )
 AI_TEMPLATE_PATTERNS = [
@@ -586,7 +609,6 @@ class DomainFeatures:
     has_mfa_keywords: bool
 
     homepage_simhash: int
-    boilerplate_ratio: float  # rough within-domain similarity proxy (v1)
     content_uniqueness_score: float
     ai_template_score: float
     keyword_repetition_score: float
@@ -632,22 +654,6 @@ def median_float(vals: List[float]) -> float:
 
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
-
-
-def compute_boilerplate_ratio(texts: List[str]) -> float:
-    # v1: use simhash distance among up to 3 texts (home + 2)
-    if len(texts) < 2:
-        return 0.5
-    hashes = [simhash(tokenize(t)) for t in texts if t]
-    if len(hashes) < 2:
-        return 0.5
-    dists = []
-    for i in range(len(hashes)):
-        for j in range(i + 1, len(hashes)):
-            dists.append((hashes[i] ^ hashes[j]).bit_count())
-    avg = sum(dists) / len(dists)  # 0..64
-    ratio = 1.0 - clamp((avg - 8) / (28 - 8), 0.0, 1.0)
-    return ratio
 
 
 async def process_domain(
@@ -735,7 +741,7 @@ async def process_domain(
     pages_attempted = len(pages_to_fetch)
     pages_fetched = 0
 
-    # For boilerplate ratio: keep up to 3 texts (home + 2 internals)
+    # Keep up to 3 page texts (home + 2 internals) for content-similarity proxies
     boiler_texts: List[str] = []
 
     for idx, u in enumerate(pages_to_fetch):
@@ -746,12 +752,12 @@ async def process_domain(
             continue
         fetched_urls.append(fu)
 
-        # capture a few texts for boilerplate proxy
+        page_text = strip_visible_text(html)
+        # keep up to 3 page texts for the content-similarity proxies
         if len(boiler_texts) < 3:
-            boiler_texts.append(strip_visible_text(html))
+            boiler_texts.append(page_text)
 
         soup = BeautifulSoup(html, "lxml")
-        text = boiler_texts[-1] if boiler_texts else strip_visible_text(html)
         scripts = SCRIPT_SRC_RE.findall(html)
         adsense, gtm, ga = extract_ids(html)
 
@@ -759,22 +765,22 @@ async def process_domain(
         all_gtm.update(gtm)
         all_ga.update(ga)
 
-        text_lens.append(len(text))
+        text_lens.append(len(page_text))
         script_src_counts.append(len(scripts))
         third_party_scripts.append(third_party_script_count(reg, scripts))
         ad_counts.append(count_ad_containers(soup))
         external_ratios.append(compute_external_link_ratio(reg, soup))
 
-        any_push = any_push or bool(PUSH_KEYWORDS.search(html))
-        any_interstitial = any_interstitial or bool(INTERSTITIAL_KEYWORDS.search(html))
+        # Prompt/copy signals run on visible text; ad-refresh stays on raw HTML.
+        any_push = any_push or bool(PUSH_KEYWORDS.search(page_text))
+        any_interstitial = any_interstitial or bool(INTERSTITIAL_KEYWORDS.search(page_text))
         any_autorefresh = any_autorefresh or bool(AUTOREFRESH_KEYWORDS.search(html))
-        any_mfa = any_mfa or bool(MFA_KEYWORDS.search(html))
+        any_mfa = any_mfa or bool(MFA_KEYWORDS.search(page_text))
 
     success_rate = (pages_fetched / pages_attempted) if pages_attempted else 0.0
 
     home_text = strip_visible_text(home_html) if home_html else ""
     home_sim = simhash(tokenize(home_text)) if home_text else 0
-    boil = compute_boilerplate_ratio(boiler_texts)
     content_uniqueness = compute_content_uniqueness_score(boiler_texts)
     ai_template_score = compute_ai_template_score(boiler_texts)
     keyword_repetition = compute_keyword_repetition_score(boiler_texts)
@@ -822,7 +828,6 @@ async def process_domain(
         has_mfa_keywords=any_mfa,
 
         homepage_simhash=int(home_sim),
-        boilerplate_ratio=round(boil, 3),
         content_uniqueness_score=content_uniqueness,
         ai_template_score=ai_template_score,
         keyword_repetition_score=keyword_repetition,

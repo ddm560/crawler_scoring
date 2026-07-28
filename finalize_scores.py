@@ -41,6 +41,50 @@ def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 
+def build_template_neighbor_counts(
+    simhashes: List[int], threshold: int, bits: int = 64
+) -> Dict[int, int]:
+    """Map each homepage simhash to how many domains share a near-identical template.
+
+    A simhash of 0 means the homepage was empty or failed to load; those are not a
+    real template signature, so they are excluded (otherwise every failed crawl
+    would cluster into one huge fake network).
+
+    For threshold <= 0 this is exact-match counting. For threshold > 0 it counts
+    neighbours within `threshold` Hamming distance, using LSH banding so we only
+    compare plausible candidates instead of all pairs. With 4 bands of 16 bits,
+    any two hashes within 3 bits must agree on at least one band (pigeonhole), so
+    banding finds every candidate for the default threshold.
+    """
+    from collections import Counter, defaultdict
+
+    freq = Counter(h for h in simhashes if h != 0)
+    if threshold <= 0:
+        return dict(freq)
+
+    unique = list(freq)
+    bands = 4
+    band_bits = bits // bands
+    mask = (1 << band_bits) - 1
+    buckets: Dict[Tuple[int, int], List[int]] = defaultdict(list)
+    for h in unique:
+        for b in range(bands):
+            buckets[(b, (h >> (b * band_bits)) & mask)].append(h)
+
+    neighbors: Dict[int, set] = {h: {h} for h in unique}
+    for group in buckets.values():
+        if len(group) < 2:
+            continue
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                a, b_ = group[i], group[j]
+                if (a ^ b_).bit_count() <= threshold:
+                    neighbors[a].add(b_)
+                    neighbors[b_].add(a)
+
+    return {h: sum(freq[x] for x in neighbors[h]) for h in unique}
+
+
 def confidence_score(
     pages_attempted: int,
     pages_fetched: int,
@@ -51,7 +95,12 @@ def confidence_score(
     cfg: dict,
 ) -> float:
     c = cfg["base"]
-    coverage = (pages_fetched / pages_attempted) if pages_attempted else 0.0
+    # Coverage is measured against a target page count, not just what we managed
+    # to attempt. Otherwise a homepage-only crawl (attempted=1, fetched=1) looks
+    # like perfect coverage despite being one page of evidence.
+    expected_pages = cfg.get("expected_pages_target", 1)
+    denom = max(pages_attempted, expected_pages)
+    coverage = (pages_fetched / denom) if denom else 0.0
 
     if coverage >= cfg["coverage_high_threshold"]:
         c += cfg["coverage_high_bonus"]
@@ -60,12 +109,15 @@ def confidence_score(
     elif coverage >= cfg["coverage_low_threshold"]:
         c += cfg["coverage_low_bonus"]
 
-    if success_rate >= cfg["success_rate_high_threshold"]:
-        c += cfg["success_rate_high_bonus"]
-    elif success_rate >= cfg["success_rate_mid_threshold"]:
-        c += cfg["success_rate_mid_bonus"]
-    elif success_rate >= cfg["success_rate_low_threshold"]:
-        c += cfg["success_rate_low_bonus"]
+    # A "perfect" success rate off a single page is not real evidence, so the
+    # success-rate bonus only applies once we've fetched a minimum number of pages.
+    if pages_fetched >= cfg.get("success_min_pages", 1):
+        if success_rate >= cfg["success_rate_high_threshold"]:
+            c += cfg["success_rate_high_bonus"]
+        elif success_rate >= cfg["success_rate_mid_threshold"]:
+            c += cfg["success_rate_mid_bonus"]
+        elif success_rate >= cfg["success_rate_low_threshold"]:
+            c += cfg["success_rate_low_bonus"]
 
     if sitemap_found:
         c += cfg["sitemap_bonus"]
@@ -205,7 +257,10 @@ def subscore_ads(
 
     if ads_txt_quality_score < cfg["ads_txt_quality_severe_threshold"]:
         s -= cfg["ads_txt_quality_severe_penalty"]
-        reasons.append("Low ads.txt structural quality")
+        if ads_txt_total_lines == 0:
+            reasons.append("No ads.txt found")
+        else:
+            reasons.append("Low ads.txt structural quality")
     elif ads_txt_quality_score < cfg["ads_txt_quality_mild_threshold"]:
         s -= cfg["ads_txt_quality_mild_penalty"]
         reasons.append("Mixed ads.txt structural quality")
@@ -378,8 +433,17 @@ def should_hard_fail(obj: dict, confidence: float, cfg: dict) -> Tuple[bool, Lis
     if int(obj.get("median_ad_container_count", 0)) > cfg["max_ad_containers"]:
         reasons.append("Extremely high ad-container density")
 
+    # MFA keyword matching is noisy on its own (phrases like "you may also like"
+    # appear on ordinary publishers), so it only hard-fails when corroborated by an
+    # independent monetization/arbitrage signal.
     if bool(obj.get("has_mfa_keywords", False)):
-        reasons.append("Strong MFA keyword pattern")
+        mfa_corroborated = (
+            bool(obj.get("affiliate_markers", False))
+            or float(obj.get("median_external_link_ratio", 0.0)) > cfg["mfa_external_ratio_threshold"]
+            or int(obj.get("median_ad_container_count", 0)) > cfg["mfa_ad_container_threshold"]
+        )
+        if mfa_corroborated:
+            reasons.append("MFA keyword pattern with corroborating ad/affiliate signals")
 
     if (
         float(obj.get("reseller_ratio", 0.0)) > cfg["reseller_ratio_threshold"]
@@ -471,7 +535,7 @@ def run(args) -> int:
     rows: List[dict] = []
     counts_adsense: Dict[str, int] = {}
     counts_gtm: Dict[str, int] = {}
-    template_sizes: Dict[int, int] = {}
+    simhashes: List[int] = []
 
     with open(args.features_jsonl, "r", encoding="utf-8") as f:
         for line in f:
@@ -485,8 +549,13 @@ def run(args) -> int:
             for gid in obj.get("gtm_ids", []):
                 counts_gtm[gid] = counts_gtm.get(gid, 0) + 1
 
-            h = int(obj.get("homepage_simhash", 0))
-            template_sizes[h] = template_sizes.get(h, 0) + 1
+            simhashes.append(int(obj.get("homepage_simhash", 0)))
+
+    # Cluster near-identical homepage templates (Hamming distance), not just exact
+    # simhash matches. template_sizes maps each signature to its network size.
+    template_sizes = build_template_neighbor_counts(
+        simhashes, int(network_cfg.get("template_hamming_threshold", 0))
+    )
 
     scored: List[ScoredDomain] = []
     total = len(rows)

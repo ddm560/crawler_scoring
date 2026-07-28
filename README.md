@@ -165,11 +165,11 @@ The scorer converts these patterns into a `network_risk_score`, which is a major
 
 `finalize_scores.py` computes sub-scores (0-100) and combines them using weights:
 
-- 35% Ads/Monetization
-- 30% Cluster similarity / shared IDs
-- 20% Content
-- 10% Legitimacy
-- 5% UX
+- 30% Ads/Monetization
+- 25% Content
+- 20% Cluster similarity / shared IDs
+- 15% Legitimacy
+- 10% UX
 
 Then it applies a confidence adjustment based on crawl quality:
 

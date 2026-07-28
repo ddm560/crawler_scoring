@@ -12,6 +12,7 @@ from finalize_scores import (
     subscore_legitimacy,
     subscore_ux,
     compute_network_risk_score,
+    build_template_neighbor_counts,
     should_hard_fail,
     _validate_config,
     load_config,
@@ -74,6 +75,21 @@ def test_confidence_score_always_clamped(default_config):
         sitemap_found=False, robots_txt_accessible=False, blocked=True, cfg=cfg,
     )
     assert 0.0 <= result <= 1.0
+
+def test_confidence_single_page_is_low(default_config):
+    cfg = default_config["confidence"]
+    # A homepage-only crawl (1 attempted, 1 fetched, "perfect" success) is weak
+    # evidence and must not clear the low-confidence bar just by fetching one page.
+    single = confidence_score(
+        pages_attempted=1, pages_fetched=1, success_rate=1.0,
+        sitemap_found=False, robots_txt_accessible=True, blocked=False, cfg=cfg,
+    )
+    full = confidence_score(
+        pages_attempted=6, pages_fetched=6, success_rate=1.0,
+        sitemap_found=True, robots_txt_accessible=True, blocked=False, cfg=cfg,
+    )
+    assert single < full
+    assert single < 0.6  # below the default low-confidence bucket threshold
 
 
 # ---------- finalize_score ----------
@@ -249,6 +265,66 @@ def test_subscore_ads_sellers_json_mismatch_capped(default_config):
     # 100 (with bonuses) - capped mismatch penalty
     assert score == 100 - cfg["sellers_json_mismatch_max_penalty"]
 
+def test_subscore_ads_no_ads_txt_reason(default_config):
+    cfg = default_config["ads"]
+    # Missing ads.txt defaults quality to 40 (< severe threshold) -> penalty, but the
+    # reason should say "no ads.txt", not "low structural quality".
+    score, reasons = subscore_ads(
+        ad_count=5, third_party_scripts=3, external_ratio=0.1,
+        affiliate_markers=False, ads_txt_quality_score=40,
+        reseller_ratio=0.0, direct_relationship_count=0,
+        ads_txt_total_lines=0, ads_txt_duplicate_count=0,
+        ads_txt_unique_ssp_domains=0,
+        sellers_json_checked=0, sellers_json_mismatches=0,
+        sellers_json_reasons=[], cfg=cfg,
+    )
+    assert any("No ads.txt" in r for r in reasons)
+    assert not any("structural quality" in r for r in reasons)
+
+def test_subscore_ads_present_but_low_quality_reason(default_config):
+    cfg = default_config["ads"]
+    # A present-but-poor ads.txt keeps the structural-quality wording.
+    _, reasons = subscore_ads(
+        ad_count=5, third_party_scripts=3, external_ratio=0.1,
+        affiliate_markers=False, ads_txt_quality_score=40,
+        reseller_ratio=0.0, direct_relationship_count=1,
+        ads_txt_total_lines=30, ads_txt_duplicate_count=0,
+        ads_txt_unique_ssp_domains=3,
+        sellers_json_checked=0, sellers_json_mismatches=0,
+        sellers_json_reasons=[], cfg=cfg,
+    )
+    assert any("structural quality" in r for r in reasons)
+    assert not any("No ads.txt" in r for r in reasons)
+
+
+# ---------- build_template_neighbor_counts ----------
+
+def test_template_clusters_exclude_empty_simhash():
+    # simhash 0 = failed/empty homepage; must not form a giant fake cluster.
+    counts = build_template_neighbor_counts([0, 0, 0, 0], threshold=3)
+    assert counts.get(0, 0) == 0
+
+def test_template_clusters_exact_matches():
+    counts = build_template_neighbor_counts([123, 123, 123, 456], threshold=0)
+    assert counts[123] == 3
+    assert counts[456] == 1
+
+def test_template_clusters_near_duplicates_group():
+    # Two hashes differing by 1 bit should cluster when threshold >= 1.
+    a = 0b1010101010
+    b = a ^ 0b1  # differs by one bit
+    counts = build_template_neighbor_counts([a, a, b], threshold=3)
+    # a has 2 exact + 1 near neighbour = 3; b has 1 exact + 2 near = 3
+    assert counts[a] == 3
+    assert counts[b] == 3
+
+def test_template_clusters_far_apart_do_not_group():
+    a = 0b11110000  # 240
+    b = 0b00001111  # 15  -> 8 bits from a, well above threshold 3
+    counts = build_template_neighbor_counts([a, a, b], threshold=3)
+    assert counts[a] == 2  # only its two exact copies
+    assert counts[b] == 1
+
 
 # ---------- subscore_legitimacy ----------
 
@@ -408,10 +484,30 @@ def test_hard_fail_extreme_ads(default_config):
     assert triggered is True
     assert any("ad-container" in r.lower() for r in reasons)
 
-def test_hard_fail_mfa(default_config):
+def test_hard_fail_mfa_alone_does_not_trigger(default_config):
     cfg = default_config["hard_fail"]
+    # MFA keywords on their own are too noisy to force a rejection.
     triggered, reasons = should_hard_fail(
         {"has_mfa_keywords": True}, confidence=0.9, cfg=cfg,
+    )
+    assert triggered is False
+    assert reasons == []
+
+def test_hard_fail_mfa_corroborated(default_config):
+    cfg = default_config["hard_fail"]
+    # MFA + an independent arbitrage signal (affiliate markers) does trigger.
+    triggered, reasons = should_hard_fail(
+        {"has_mfa_keywords": True, "affiliate_markers": True}, confidence=0.9, cfg=cfg,
+    )
+    assert triggered is True
+    assert any("MFA" in r for r in reasons)
+
+def test_hard_fail_mfa_corroborated_by_ad_density(default_config):
+    cfg = default_config["hard_fail"]
+    triggered, reasons = should_hard_fail(
+        {"has_mfa_keywords": True,
+         "median_ad_container_count": cfg["mfa_ad_container_threshold"] + 1},
+        confidence=0.9, cfg=cfg,
     )
     assert triggered is True
     assert any("MFA" in r for r in reasons)
